@@ -16,6 +16,7 @@ import config_server
 import urllib
 import urllib2
 import iptc
+import netlink
 
 from dcnow import DreamcastNowService
 from port_forwarding import PortForwarding
@@ -492,6 +493,11 @@ class GracefulKiller(object):
         logging.warning("Received signal: %s", signum)
         self.kill_now = True
 
+def do_netlink(side,dial_string,device_and_speed):
+    ser = serial.Serial(device_and_speed[0], device_and_speed[1], timeout=0.01)
+    state, opponent  = netlink.netlink_setup(device_and_speed,side,dial_string,ser)
+    state = netlink.netlink_exchange(side,state,opponent)
+    return state
 
 def process():
     killer = GracefulKiller()
@@ -557,13 +563,20 @@ def process():
             if ord(char) == 16:
                 # DLE character
                 try:
-                    char = modem._serial.read(1)
-                    digit = int(char)
-                    logger.info("Heard: %s", digit)
+                    parsed = netlink.digit_parser(modem)
+                    if parsed == "nada":
+                        pass
+                    elif isinstance(parsed,dict):
+                        client = parsed['client']
+                        dial_string = parsed['dial_string']
+                        side = parsed['side']
 
-                    mode = "ANSWERING"
-                    modem.stop_dial_tone()
-                    time_digit_heard = now
+
+                        logger.info("Heard: %s" % dial_string)
+
+                        mode = "ANSWERING"
+                        modem.stop_dial_tone()
+                        time_digit_heard = now
                 except (TypeError, ValueError):
                     pass
         elif mode == "ANSWERING":
@@ -574,22 +587,30 @@ def process():
                 mode = "CONNECTED"
 
         elif mode == "CONNECTED":
-            dcnow.go_online(dreamcast_ip)
-
-            # We start watching /var/log/messages for the hang up message
-            for line in sh.tail("-f", "/var/log/messages", "-n", "1", _iter=True):
-                if "Modem hangup" in line:
-                    logger.info("Detected modem hang up, going back to listening")
-                    time.sleep(5)  # Give the hangup some time
-                    break
-
-            dcnow.go_offline()
-
-            mode = "LISTENING"
-            modem = Modem(device_and_speed[0], device_and_speed[1], dial_tone_enabled)
-            modem.connect()
-            if dial_tone_enabled:
+            if client == "direct_dial":
+                do_netlink(side,dial_string,device_and_speed)
+                logger.info("Netlink Disconnected")
+                time.sleep(5)
+                mode = "LISTENING"
+                modem.connect()
                 modem.start_dial_tone()
+            elif client == "ppp_client":
+                dcnow.go_online(dreamcast_ip)
+
+                # We start watching /var/log/messages for the hang up message
+                for line in sh.tail("-f", "/var/log/messages", "-n", "1", _iter=True):
+                    if "Modem hangup" in line:
+                        logger.info("Detected modem hang up, going back to listening")
+                        time.sleep(5)  # Give the hangup some time
+                        break
+
+                dcnow.go_offline()
+
+                mode = "LISTENING"
+                modem = Modem(device_and_speed[0], device_and_speed[1], dial_tone_enabled)
+                modem.connect()
+                if dial_tone_enabled:
+                    modem.start_dial_tone()
 
     # Temporarily disabled, see above
     # port_forwarding.delete_all()
