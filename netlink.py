@@ -20,7 +20,10 @@ logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger('dreampi')
 import struct
 import threading
-# import binascii
+import binascii
+printout = False
+if 'printout' in sys.argv:
+    printout = True
 
 # side = ""
 data = []
@@ -109,10 +112,12 @@ def listener():
             raw_sequence = message.split(b'sequenceno')[1]
             sequence = struct.unpack('d',raw_sequence)[0]
             data.append({'ts':sequence,'data':payload})
-            # if len(payload) > 0:
-            #     logger.info(binascii.hexlify(payload))
+            if len(payload) > 0 and printout == True:
+                logger.info(binascii.hexlify(payload))
         except:
             break
+    logger.info("listener stopped")
+    return
                 
 def printer():
     global state
@@ -129,8 +134,9 @@ def printer():
                 # logger.info('latency: %sms' % latency)
                 # logger.info(toSend)
             ser.write(toSend)
-        except IndexError:
+        except:
             continue
+    logger.info("printer stopped")
     return
             
 def sender(side,opponent):
@@ -149,7 +155,9 @@ def sender(side,opponent):
         if "NO CARRIER" in raw_input:
             logger.info("detected hangup")
             state = "netlink_disconnected"
+            udp.close()
             ser.close()
+            logger.info("sender stopped")
             return
         delimiter = "sequenceno"
         try:
@@ -188,8 +196,8 @@ def netlink_exchange(side,net_state,opponent):
         t1.start()
         t2.start()
         t3.start()
-        # t1.join()
-        # t2.join()
+        t1.join()
+        t2.join()
         t3.join()
         
 

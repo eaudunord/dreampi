@@ -231,7 +231,7 @@ ENABLE_SPEED_DETECTION = False  # Set this to true if you want to use wvdialconf
 
 
 def detect_device_and_speed():
-    MAX_SPEED = 57600
+    MAX_SPEED = 115200
 
     if not ENABLE_SPEED_DETECTION:
         # By default we don't detect the speed or device as it's flakey in later
@@ -494,7 +494,7 @@ class GracefulKiller(object):
         self.kill_now = True
 
 def do_netlink(side,dial_string,device_and_speed):
-    ser = serial.Serial(device_and_speed[0], device_and_speed[1], timeout=0.01)
+    ser = serial.Serial(device_and_speed[0], device_and_speed[1], timeout=0.005)
     state, opponent  = netlink.netlink_setup(device_and_speed,side,dial_string,ser)
     state = netlink.netlink_exchange(side,state,opponent)
     return state
@@ -594,7 +594,7 @@ def process():
                 mode = "LISTENING"
                 modem.connect()
                 modem.start_dial_tone()
-            elif client == "ppp_client":
+            elif client == "ppp_internet":
                 dcnow.go_online(dreamcast_ip)
 
                 # We start watching /var/log/messages for the hang up message
