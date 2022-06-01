@@ -237,7 +237,7 @@ def detect_device_and_speed():
         # By default we don't detect the speed or device as it's flakey in later
         # Pi kernels. But it might be necessary for some people so that functionality
         # can be enabled by setting the flag above to True
-        return ("ttyACM0", MAX_SPEED)
+        return ("/dev/ttyACM0", MAX_SPEED)
 
     command = ["wvdialconf", "/dev/null"]
 
@@ -261,7 +261,7 @@ def detect_device_and_speed():
 
     except:
         logger.exception("Unable to detect modem. Falling back to ttyACM0")
-    return ("ttyACM0", MAX_SPEED)
+    return ("/dev/ttyACM0", MAX_SPEED)
 
 
 class Daemon(object):
@@ -380,7 +380,7 @@ class Modem(object):
 
         logger.info("Opening serial interface to {}".format(self._device))
         self._serial = serial.Serial(
-            "/dev/{}".format(self._device), self._speed, timeout=0
+            self._device, self._speed, timeout=0
         )
 
     def disconnect(self):
@@ -428,7 +428,7 @@ class Modem(object):
         self.send_command("ATA", ignore_responses=["OK"])
         time.sleep(5)
         logger.info("Call answered!")
-        logger.info(subprocess.check_output(["pon", "dreamcast"]))
+        # logger.info(subprocess.check_output(["pon", "dreamcast"]))
         logger.info("Connected")
 
     def send_command(self, command, timeout=60, ignore_responses=None):
@@ -494,10 +494,10 @@ class GracefulKiller(object):
         self.kill_now = True
 
 def do_netlink(side,dial_string,device_and_speed):
-    ser = serial.Serial(device_and_speed[0], device_and_speed[1], timeout=0.005)
-    state, opponent  = netlink.netlink_setup(device_and_speed,side,dial_string,ser)
-    state = netlink.netlink_exchange(side,state,opponent)
-    return state
+    # ser = serial.Serial(device_and_speed[0], device_and_speed[1], timeout=0.005)
+    state, opponent  = netlink.netlink_setup(device_and_speed,side,dial_string)
+    netlink.netlink_exchange(side,state,opponent)
+
 
 def process():
     killer = GracefulKiller()
@@ -539,7 +539,6 @@ def process():
     # port_forwarding.forward_all()
 
     mode = "LISTENING"
-
     modem.connect()
     if dial_tone_enabled:
         modem.start_dial_tone()
@@ -588,6 +587,7 @@ def process():
 
         elif mode == "CONNECTED":
             if client == "direct_dial":
+                
                 do_netlink(side,dial_string,device_and_speed)
                 logger.info("Netlink Disconnected")
                 time.sleep(5)
