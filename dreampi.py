@@ -428,7 +428,16 @@ class Modem(object):
         self.send_command("ATA", ignore_responses=["OK"])
         time.sleep(5)
         logger.info("Call answered!")
-        # logger.info(subprocess.check_output(["pon", "dreamcast"]))
+        logger.info(subprocess.check_output(["pon", "dreamcast"]))
+        logger.info("Connected")
+
+    def netlink_answer(self):
+        self.reset()
+        # When we send ATA we only want to look for CONNECT. Some modems respond OK then CONNECT
+        # and that messes everything up
+        self.send_command("ATA", ignore_responses=["OK"])
+        time.sleep(5)
+        logger.info("Call answered!")
         logger.info("Connected")
 
     def send_command(self, command, timeout=60, ignore_responses=None):
@@ -581,36 +590,39 @@ def process():
         elif mode == "ANSWERING":
             if (now - time_digit_heard).total_seconds() > 8.0:
                 time_digit_heard = None
-                modem.answer()
-                modem.disconnect()
-                mode = "CONNECTED"
+                if client == "ppp_internet":
+                    modem.answer()
+                    modem.disconnect()
+                    mode = "CONNECTED"
+                elif client == "direct_dial":
+                    modem.netlink_answer()
+                    modem.disconnect()
+                    mode = "NETLINK_CONNECTED"
 
         elif mode == "CONNECTED":
-            if client == "direct_dial":
-                
-                do_netlink(side,dial_string,device_and_speed)
-                logger.info("Netlink Disconnected")
-                time.sleep(5)
-                mode = "LISTENING"
-                modem.connect()
+            dcnow.go_online(dreamcast_ip)
+
+            # We start watching /var/log/messages for the hang up message
+            for line in sh.tail("-f", "/var/log/messages", "-n", "1", _iter=True):
+                if "Modem hangup" in line:
+                    logger.info("Detected modem hang up, going back to listening")
+                    time.sleep(5)  # Give the hangup some time
+                    break
+
+            dcnow.go_offline()
+
+            mode = "LISTENING"
+            modem = Modem(device_and_speed[0], device_and_speed[1], dial_tone_enabled)
+            modem.connect()
+            if dial_tone_enabled:
                 modem.start_dial_tone()
-            elif client == "ppp_internet":
-                dcnow.go_online(dreamcast_ip)
-
-                # We start watching /var/log/messages for the hang up message
-                for line in sh.tail("-f", "/var/log/messages", "-n", "1", _iter=True):
-                    if "Modem hangup" in line:
-                        logger.info("Detected modem hang up, going back to listening")
-                        time.sleep(5)  # Give the hangup some time
-                        break
-
-                dcnow.go_offline()
-
-                mode = "LISTENING"
-                modem = Modem(device_and_speed[0], device_and_speed[1], dial_tone_enabled)
-                modem.connect()
-                if dial_tone_enabled:
-                    modem.start_dial_tone()
+        elif mode == "NETLINK_CONNECTED":
+            do_netlink(side,dial_string,device_and_speed)
+            logger.info("Netlink Disconnected")
+            time.sleep(5)
+            mode = "LISTENING"
+            modem.connect()
+            modem.start_dial_tone()
 
     # Temporarily disabled, see above
     # port_forwarding.delete_all()
