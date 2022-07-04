@@ -17,6 +17,7 @@ import urllib
 import urllib2
 import iptc
 import netlink
+import select
 
 from dcnow import DreamcastNowService
 from port_forwarding import PortForwarding
@@ -601,16 +602,49 @@ def process():
 
         elif mode == "CONNECTED":
             dcnow.go_online(dreamcast_ip)
-
+            # old monitoring loop
             # We start watching /var/log/messages for the hang up message
-            for line in sh.tail("-f", "/var/log/messages", "-n", "1", _iter=True):
-                if "Modem hangup" in line:
-                    logger.info("Detected modem hang up, going back to listening")
-                    time.sleep(5)  # Give the hangup some time
+            # for line in sh.tail("-f", "/var/log/messages", "-n", "1", _iter=True):
+            #     if "Modem hangup" in line:
+            #         logger.info("Detected modem hang up, going back to listening")
+            #         time.sleep(2)  # Give the hangup some time
+            #         break
+            ppp_found = False
+            PORT = 65432
+            tcp = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            tcp.setblocking(0)
+            tcp.settimeout(120)
+            tcp.bind(('', PORT))
+            tcp.listen(5)
+
+            while True: #New monitoring loop
+                time.sleep(1)
+                ready = select.select([tcp], [], [],0) #0 is polling select so it doesn't block
+                if ready[0]:
+                    conn, addr = tcp.accept()
+                    try:
+                        data = conn.recv(1024)
+                        logger.info(data)
+                    except socket.error:
+                        data = ''
+                        pass
+                    if data == b'ppp_kill': #Not all KDDI games were terminating PPP properly
+                        subprocess.call(['poff','dreamcast'])
+                        break
+                if ppp_found == False:
+                    try:
+                        ppp_info = sh.ifconfig("ppp0") #check if we have an active PPP link
+                        ppp_found = True #Don't know if ppp comes up right away so make sure it's up
+                    except: #will raise an exception if ppp0 doesn't exist
+                        continue
+                try:
+                    ppp_info = sh.ifconfig("ppp0") #should return as long as link is active
+                except:
                     break
 
             dcnow.go_offline()
-
+            tcp.shutdown(socket.SHUT_RDWR)
+            tcp.close()
             mode = "LISTENING"
             modem = Modem(device_and_speed[0], device_and_speed[1], dial_tone_enabled)
             modem.connect()
