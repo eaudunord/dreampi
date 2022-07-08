@@ -613,7 +613,7 @@ def process():
             PORT = 65432
             tcp = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             tcp.setblocking(0)
-            tcp.settimeout(120)
+            tcp.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             tcp.bind(('', PORT))
             tcp.listen(5)
 
@@ -629,24 +629,35 @@ def process():
                         data = ''
                         pass
                     if data == b'ppp_kill': #Not all KDDI games were terminating PPP properly
-                        subprocess.call(['poff','dreamcast'])
-                        break
+                        kddi_server = ''
+                        try:
+                            kddi_server = socket.gethostbyname('direct2.capcom.co.jp')
+                        except socket.error: #if for some reason DNS lookup fails
+                            pass
+                        if addr[0] == kddi_server: #make sure this really came from the server and not a salty foe
+                            with open(os.devnull, 'wb') as devnull:
+                                subprocess.call(["sudo", "killall", "-HUP", "pppd"], stderr=devnull)
+                            logger.info('executed kill command')
+                            break
                 if ppp_found == False:
                     try:
                         ppp_info = sh.ifconfig("ppp0") #check if we have an active PPP link
                         ppp_found = True #Don't know if ppp comes up right away so make sure it's up
-                    except: #will raise an exception if ppp0 doesn't exist
-                        continue
+                    except: #will raise an exception if ppp0 doesn't exist on the first try
+                        continue #retry until it's found
                 try:
                     ppp_info = sh.ifconfig("ppp0") #should return as long as link is active
-                except:
+                except: #ppp is down
                     break
-
+            for line in sh.tail("-f", "/var/log/messages", "-n", "1", _iter=True):
+                if "pppd" and "Exit" in line:
+                    logger.info("Detected modem hang up, going back to listening")
+                    break
             dcnow.go_offline()
             tcp.shutdown(socket.SHUT_RDWR)
             tcp.close()
             mode = "LISTENING"
-            modem = Modem(device_and_speed[0], device_and_speed[1], dial_tone_enabled)
+            # modem = Modem(device_and_speed[0], device_and_speed[1], dial_tone_enabled)
             modem.connect()
             if dial_tone_enabled:
                 modem.start_dial_tone()
