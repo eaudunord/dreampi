@@ -210,7 +210,7 @@ ktune
 noccp
     """.strip()
 
-    this_ip = find_next_unused_ip(".".join(subnet) + ".100")
+    this_ip = find_next_unused_ip(".".join(subnet) + ".200")
     dreamcast_ip = find_next_unused_ip(this_ip)
 
     logger.info("Dreamcast IP: {}".format(dreamcast_ip))
@@ -517,10 +517,6 @@ def process():
     tcp.bind(('', PORT))
     tcp.listen(5)
 
-    kill_tcp = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    kill_tcp.setblocking(0)
-    kill_tcp.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-
     killer = GracefulKiller()
 
     dial_tone_enabled = "--disable-dial-tone" not in sys.argv
@@ -576,10 +572,9 @@ def process():
         if client == "KDDI":
             mode = "ANSWERING"
             modem.stop_dial_tone()
-            time_digit_heard = now
-
+            time_digit_heard = now 
         if mode == "LISTENING":
-            ready = select.select([tcp], [tcp], [],0) #0 is polling select so it doesn't block
+            ready = select.select([tcp], [], [],0) #0 is polling select so it doesn't block
             if ready[0]:
                 conn, addr = tcp.accept()
                 try:
@@ -630,8 +625,9 @@ def process():
                     modem.netlink_answer()
                     modem.disconnect()
                     mode = "NETLINK_CONNECTED"
-                    side = "master"
-                    dial_string = "192.168.0.80"
+                    side = "slave"
+                    dial_string = "192.168.0.79"
+
 
         elif mode == "CONNECTED":
             dcnow.go_online(dreamcast_ip)
@@ -647,8 +643,8 @@ def process():
             
 
             while True: #New monitoring loop
-                # time.sleep(1)
-                ready = select.select([tcp], [kill_tcp], [],0) #0 is polling select so it doesn't block
+                time.sleep(1)
+                ready = select.select([tcp], [], [],0) #0 is polling select so it doesn't block
                 if ready[0]:
                     conn, addr = tcp.accept()
                     try:
@@ -658,24 +654,22 @@ def process():
                         data = ''
                         pass
                     if data == b'ppp_kill': #Not all KDDI games were terminating PPP properly
-                        # kddi_server = ''
-                        # try:
-                        #     kddi_server = socket.gethostbyname('direct2.capcom.co.jp')
-                        # except socket.error: #if for some reason DNS lookup fails
-                        #     pass
-                        # if addr[0] == kddi_server: #make sure this really came from the server and not a salty foe
-                        #     kill_ppp = True
-                        #     kill_received = time.time()
-                        #     # client = "KDDI"
-                        kill_ppp = True
+                        kddi_server = ''
+                        try:
+                            kddi_server = socket.gethostbyname('direct2.capcom.co.jp')
+                        except socket.error: #if for some reason DNS lookup fails
+                            pass
+                        if addr[0] == kddi_server: #make sure this really came from the server and not a salty foe
+                            kill_ppp = True
+                            kill_received = time.time()
+                            client = "KDDI"
                                                        
                 if kill_ppp == True:
-                    # if time.time() - kill_received > 3: #failsafe to start the reset if DC doesn't terminate ppp correctly
-                    with open(os.devnull, 'wb') as devnull:
-                        subprocess.call(["sudo", "killall", "-HUP", "pppd"], stderr=devnull)
-                        logger.info('executed kill command')
-                        logger.info(time.time() - kill_received)
-                        break
+                    if time.time() - kill_received > 5: #failsafe to start the reset if DC doesn't terminate ppp correctly
+                        with open(os.devnull, 'wb') as devnull:
+                            subprocess.call(["sudo", "killall", "-HUP", "pppd"], stderr=devnull)
+                            logger.info('executed kill command')
+                            break
                 if ppp_found == False:
                     try:
                         ppp_info = sh.ifconfig("ppp0") #check if we have an active PPP link
