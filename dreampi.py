@@ -503,9 +503,9 @@ class GracefulKiller(object):
         logging.warning("Received signal: %s", signum)
         self.kill_now = True
 
-def do_netlink(side,dial_string,device_and_speed):
+def do_netlink(side,dial_string,device_and_speed,tcp):
     # ser = serial.Serial(device_and_speed[0], device_and_speed[1], timeout=0.005)
-    state, opponent  = netlink.netlink_setup(device_and_speed,side,dial_string)
+    state, opponent  = netlink.netlink_setup(device_and_speed,side,dial_string,tcp)
     netlink.netlink_exchange(side,state,opponent)
 
 
@@ -517,10 +517,6 @@ def process():
     tcp.bind(('', PORT))
     tcp.listen(5)
 
-    kill_tcp = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    kill_tcp.setblocking(0)
-    kill_tcp.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-
     killer = GracefulKiller()
 
     dial_tone_enabled = "--disable-dial-tone" not in sys.argv
@@ -530,7 +526,6 @@ def process():
         subprocess.call(["sudo", "killall", "pppd"], stderr=devnull)
 
     device_and_speed, internet_connected = None, False
-    client = ""
     # Startup checks, make sure that we don't do anything until
     # we have a modem and internet connection
     while True:
@@ -573,13 +568,9 @@ def process():
             break
 
         now = datetime.now()
-        if client == "KDDI":
-            mode = "ANSWERING"
-            modem.stop_dial_tone()
-            time_digit_heard = now
 
         if mode == "LISTENING":
-            ready = select.select([tcp], [tcp], [],0) #0 is polling select so it doesn't block
+            ready = select.select([tcp], [], [],0) #0 is polling select so it doesn't block
             if ready[0]:
                 conn, addr = tcp.accept()
                 try:
@@ -590,6 +581,8 @@ def process():
                     pass
                 if data == b'ppp_kill':
                     logger.info("kill packet was late")
+                conn.shutdown(socket.SHUT_RDWR)
+                conn.close()
             modem.update()
             char = modem._serial.read(1).strip()
             if not char:
@@ -625,13 +618,6 @@ def process():
                     modem.netlink_answer()
                     modem.disconnect()
                     mode = "NETLINK_CONNECTED"
-                elif client == "KDDI":
-                    time.sleep(15)
-                    modem.netlink_answer()
-                    modem.disconnect()
-                    mode = "NETLINK_CONNECTED"
-                    side = "master"
-                    dial_string = "192.168.0.80"
 
         elif mode == "CONNECTED":
             dcnow.go_online(dreamcast_ip)
@@ -647,8 +633,8 @@ def process():
             
 
             while True: #New monitoring loop
-                # time.sleep(1)
-                ready = select.select([tcp], [kill_tcp], [],0) #0 is polling select so it doesn't block
+                time.sleep(0.5)
+                ready = select.select([tcp], [], [],0) #0 is polling select so it doesn't block
                 if ready[0]:
                     conn, addr = tcp.accept()
                     try:
@@ -658,24 +644,25 @@ def process():
                         data = ''
                         pass
                     if data == b'ppp_kill': #Not all KDDI games were terminating PPP properly
-                        # kddi_server = ''
-                        # try:
-                        #     kddi_server = socket.gethostbyname('direct2.capcom.co.jp')
-                        # except socket.error: #if for some reason DNS lookup fails
-                        #     pass
-                        # if addr[0] == kddi_server: #make sure this really came from the server and not a salty foe
-                        #     kill_ppp = True
-                        #     kill_received = time.time()
-                        #     # client = "KDDI"
-                        kill_ppp = True
+                        kddi_server = ''
+                        try:
+                            kddi_server = socket.gethostbyname('direct2.capcom.co.jp')
+                        except socket.error: #if for some reason DNS lookup fails
+                            pass
+                        if addr[0] == kddi_server: #make sure this really came from the server and not a salty foe
+                            kill_ppp = True
+                    conn.shutdown(socket.SHUT_RDWR)
+                    conn.close()
                                                        
                 if kill_ppp == True:
                     # if time.time() - kill_received > 3: #failsafe to start the reset if DC doesn't terminate ppp correctly
                     with open(os.devnull, 'wb') as devnull:
-                        subprocess.call(["sudo", "killall", "-HUP", "pppd"], stderr=devnull)
-                        logger.info('executed kill command')
-                        logger.info(time.time() - kill_received)
-                        break
+                        try:
+                            subprocess.call(["sudo", "killall", "-HUP", "pppd"], stderr=devnull)
+                            logger.info('executed kill command')
+                            break
+                        except:#if ppp is already coming down this might give an exception
+                            break
                 if ppp_found == False:
                     try:
                         ppp_info = sh.ifconfig("ppp0") #check if we have an active PPP link
@@ -687,7 +674,7 @@ def process():
                 except: #ppp is down
                     break
             for line in sh.tail("-f", "/var/log/messages", "-n", "1", _iter=True):
-                if "pppd" and "Exit" in line:
+                if "pppd" and "Exit" in line:#wait for pppd to execute the ip-down script
                     logger.info("Detected modem hang up, going back to listening")
                     break
             dcnow.go_offline()
