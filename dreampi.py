@@ -505,7 +505,7 @@ class GracefulKiller(object):
 
 def do_netlink(side,dial_string,device_and_speed,tcp):
     # ser = serial.Serial(device_and_speed[0], device_and_speed[1], timeout=0.005)
-    state, opponent  = netlink.netlink_setup(device_and_speed,side,dial_string,tcp)
+    state, opponent  = netlink.netlink_setup(device_and_speed,side,dial_string)
     netlink.netlink_exchange(side,state,opponent)
 
 
@@ -684,9 +684,15 @@ def process():
             if dial_tone_enabled:
                 modem.start_dial_tone()
         elif mode == "NETLINK_CONNECTED":
+            tcp.shutdown(socket.SHUT_RDWR)
+            tcp.close()
             do_netlink(side,dial_string,device_and_speed)
             logger.info("Netlink Disconnected")
-            time.sleep(5)
+            tcp = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            tcp.setblocking(0)
+            tcp.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            tcp.bind(('', PORT))
+            tcp.listen(5)
             mode = "LISTENING"
             modem.connect()
             modem.start_dial_tone()
