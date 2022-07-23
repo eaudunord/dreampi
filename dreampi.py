@@ -503,14 +503,77 @@ class GracefulKiller(object):
         logging.warning("Received signal: %s", signum)
         self.kill_now = True
 
-def do_netlink(side,dial_string,device_and_speed,tcp):
+def do_netlink(side,dial_string,device_and_speed):
     # ser = serial.Serial(device_and_speed[0], device_and_speed[1], timeout=0.005)
     state, opponent  = netlink.netlink_setup(device_and_speed,side,dial_string)
     netlink.netlink_exchange(side,state,opponent)
 
+dmz_patcher_in = None
+dmz_patcher_out = None
+
+
+def start_dmz_patching(dreamcast_IP):
+    # This should allow the KDDI server to reach the pi for people who DMZ
+    global dmz_patcher_in
+    global dmz_patcher_out
+
+    def get_ip_address():
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        return s.getsockname()[0]
+
+    pi_lan = get_ip_address()
+
+    table = iptc.Table(iptc.Table.NAT)
+    chain = iptc.Chain(table, "PREROUTING")
+
+    rule = iptc.Rule()
+    rule.protocol = "tcp"
+    match = iptc.Match(rule, "tcp")
+    match.dport = "65432"
+    rule.add_match(match)
+    rule.dst = dreamcast_IP
+    rule.create_target("DNAT")
+    rule.target.to_destination = pi_lan+":65432"
+    chain.append_rule(rule)
+
+    dmz_patcher_in = rule
+
+    table = iptc.Table(iptc.Table.NAT)
+    chain = iptc.Chain(table, "POSTROUTING")
+    rule = iptc.Rule()
+    rule.protocol = "tcp"
+    rule.dst = pi_lan
+    match = iptc.Match(rule, "tcp")
+    match.dport = "65432"
+    rule.add_match(match)
+    target = iptc.Target(rule, "MASQUERADE")
+    # target.to_ports = "65432"
+    rule.target = target
+    chain.insert_rule(rule)
+
+    dmz_patcher_out = rule
+
+
+    logger.info("DMZ routing enabled")
+    return pi_lan
+
+
+def stop_dmz_patching():
+    global dmz_patcher_in
+    global dmz_patcher_out
+    if dmz_patcher_in:
+        table = iptc.Table(iptc.Table.NAT)
+        chain = iptc.Chain(table, "PREROUTING")
+        chain.delete_rule(dmz_patcher_in)
+    if dmz_patcher_out:
+        table = iptc.Table(iptc.Table.NAT)
+        chain = iptc.Chain(table, "POSTROUTING")
+        chain.delete_rule(dmz_patcher_out)
+        logger.info("DMZ routing disabled")
 
 def process():
-    PORT = 65432
+    PORT = 65433
     tcp = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     tcp.setblocking(0)
     tcp.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -546,6 +609,7 @@ def process():
 
     modem = Modem(device_and_speed[0], device_and_speed[1], dial_tone_enabled)
     dreamcast_ip = autoconfigure_ppp(modem.device_name, modem.device_speed)
+    lan_ip = start_dmz_patching(dreamcast_ip)
 
     # Get a port forwarding object, now that we know the DC IP.
     # port_forwarding = PortForwarding(dreamcast_ip, logger)
@@ -620,7 +684,7 @@ def process():
                     mode = "NETLINK_CONNECTED"
 
         elif mode == "CONNECTED":
-            dcnow.go_online(dreamcast_ip)
+            # dcnow.go_online(dreamcast_ip)
             # old monitoring loop
             # We start watching /var/log/messages for the hang up message
             # for line in sh.tail("-f", "/var/log/messages", "-n", "1", _iter=True):
@@ -630,6 +694,7 @@ def process():
             #         break
             ppp_found = False
             kill_ppp = False
+            kill_foe = False
             
 
             while True: #New monitoring loop
@@ -651,8 +716,26 @@ def process():
                             pass
                         if addr[0] == kddi_server: #make sure this really came from the server and not a salty foe
                             kill_ppp = True
+                            kill_foe = True
+
+                        kill_ppp = True
                     conn.shutdown(socket.SHUT_RDWR)
                     conn.close()
+                if kill_foe == True:
+                    foe_ip = ""
+                    if lan_ip == "192.168.0.80":
+                        foe_ip = "192.168.0.79"
+                    if lan_ip == "192.168.0.79":
+                        foe_ip = "192.168.0.80"
+                    foe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                    # foe.setblocking(0)
+                    foe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                    ready = select.select([],[foe],[])
+                    if ready[1]:
+                        foe.connect((foe_ip,65432))
+                        foe.sendall(b'ppp_kill')
+                        foe.shutdown(socket.SHUT_RDWR)
+                        foe.close()
                                                        
                 if kill_ppp == True:
                     # if time.time() - kill_received > 3: #failsafe to start the reset if DC doesn't terminate ppp correctly
@@ -677,7 +760,7 @@ def process():
                 if "pppd" and "Exit" in line:#wait for pppd to execute the ip-down script
                     logger.info("Detected modem hang up, going back to listening")
                     break
-            dcnow.go_offline()
+            # dcnow.go_offline()
             mode = "LISTENING"
             # modem = Modem(device_and_speed[0], device_and_speed[1], dial_tone_enabled)
             modem.connect()
@@ -748,6 +831,7 @@ def main():
         stop_process("dcgamespy")
         stop_process("dcvoip")
         stop_afo_patching()
+        stop_dmz_patching()
 
         config_server.stop()
         logger.info("Dreampi quit successfully")
