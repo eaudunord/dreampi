@@ -183,7 +183,7 @@ def find_next_unused_ip(start):
     raise Exception("Unable to find a free IP on the network")
 
 
-def autoconfigure_ppp(device, speed):
+def autoconfigure_ppp(device, speed,pi_ip):
     """
        Every network is different, this function runs on boot and tries
        to autoconfigure PPP as best it can by detecting the subnet and gateway
@@ -209,8 +209,10 @@ proxyarp
 ktune
 noccp
     """.strip()
-
-    this_ip = find_next_unused_ip(".".join(subnet) + ".100")
+    if pi_ip == "192.168.0.80":
+        this_ip = find_next_unused_ip(".".join(subnet) + ".200")
+    else:
+        this_ip = find_next_unused_ip(".".join(subnet) + ".100")
     dreamcast_ip = find_next_unused_ip(this_ip)
 
     logger.info("Dreamcast IP: {}".format(dreamcast_ip))
@@ -694,8 +696,14 @@ def process():
                         client = parsed['client']
                         dial_string = parsed['dial_string']
                         side = parsed['side']
-
-
+                        foe_ip = ""
+                        if lan_ip == "192.168.0.80":
+                            foe_ip = "192.168.0.79"
+                        if lan_ip == "192.168.0.79":
+                            foe_ip = "192.168.0.80"
+                        if dial_string == "1234567":
+                            time.sleep(15)
+                            dial_string = foe_ip
                         logger.info("Heard: %s" % dial_string)
                         if client == "direct_dial":
                             mode = "NETLINK ANSWERING"
