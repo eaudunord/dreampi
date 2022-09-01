@@ -383,6 +383,15 @@ class Modem(object):
         self._serial = serial.Serial(
             self._device, self._speed, timeout=0
         )
+    
+    def connect_netlink(self):
+        if self._serial:
+            self.disconnect()
+
+        logger.info("Opening serial interface to {}".format(self._device))
+        self._serial = serial.Serial(
+            self._device, self._speed, timeout=0.003
+        )
 
     def disconnect(self):
         if self._serial and self._serial.isOpen():
@@ -427,7 +436,7 @@ class Modem(object):
         # When we send ATA we only want to look for CONNECT. Some modems respond OK then CONNECT
         # and that messes everything up
         self.send_command("ATA", ignore_responses=["OK"])
-        time.sleep(5)
+        # time.sleep(5)
         logger.info("Call answered!")
         logger.info(subprocess.check_output(["pon", "dreamcast"]))
         logger.info("Connected")
@@ -437,7 +446,7 @@ class Modem(object):
         # When we send ATA we only want to look for CONNECT. Some modems respond OK then CONNECT
         # and that messes everything up
         self.send_command("ATA", ignore_responses=["OK"])
-        time.sleep(5)
+        # time.sleep(5)
         logger.info("Call answered!")
         logger.info("Connected")
 
@@ -534,7 +543,7 @@ def start_dmz_patching(dreamcast_IP):
     rule.add_match(match)
     rule.dst = dreamcast_IP
     rule.create_target("DNAT")
-    rule.target.to_destination = pi_lan+":65432"
+    rule.target.to_destination = pi_lan+":65433"
     chain.append_rule(rule)
 
     dmz_patcher_in = rule
@@ -545,7 +554,7 @@ def start_dmz_patching(dreamcast_IP):
     rule.protocol = "tcp"
     rule.dst = pi_lan
     match = iptc.Match(rule, "tcp")
-    match.dport = "65432"
+    match.dport = "65433"
     rule.add_match(match)
     target = iptc.Target(rule, "MASQUERADE")
     # target.to_ports = "65432"
@@ -645,8 +654,8 @@ def process():
                     pass
                 if data == b'ppp_kill':
                     logger.info("kill packet was late")
-                conn.shutdown(socket.SHUT_RDWR)
-                conn.close()
+                # conn.shutdown(socket.SHUT_RDWR)
+                # conn.close()
             modem.update()
             char = modem._serial.read(1).strip()
             if not char:
@@ -679,6 +688,7 @@ def process():
                     modem.disconnect()
                     mode = "CONNECTED"
                 elif client == "direct_dial":
+                    # modem.connect_netlink()
                     modem.netlink_answer()
                     modem.disconnect()
                     mode = "NETLINK_CONNECTED"
@@ -719,8 +729,8 @@ def process():
                             kill_foe = True
 
                         kill_ppp = True
-                    conn.shutdown(socket.SHUT_RDWR)
-                    conn.close()
+                    # conn.shutdown(socket.SHUT_RDWR)
+                    # conn.close()
                 if kill_foe == True:
                     foe_ip = ""
                     if lan_ip == "192.168.0.80":
@@ -732,10 +742,10 @@ def process():
                     foe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
                     ready = select.select([],[foe],[])
                     if ready[1]:
-                        foe.connect((foe_ip,65432))
+                        foe.connect((foe_ip,65433))
                         foe.sendall(b'ppp_kill')
-                        foe.shutdown(socket.SHUT_RDWR)
-                        foe.close()
+                        # foe.shutdown(socket.SHUT_RDWR)
+                        # foe.close()
                                                        
                 if kill_ppp == True:
                     # if time.time() - kill_received > 3: #failsafe to start the reset if DC doesn't terminate ppp correctly
@@ -767,15 +777,15 @@ def process():
             if dial_tone_enabled:
                 modem.start_dial_tone()
         elif mode == "NETLINK_CONNECTED":
-            tcp.shutdown(socket.SHUT_RDWR)
-            tcp.close()
+            # tcp.shutdown(socket.SHUT_RDWR)
+            # tcp.close()
             do_netlink(side,dial_string,device_and_speed)
             logger.info("Netlink Disconnected")
-            tcp = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            tcp.setblocking(0)
-            tcp.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            tcp.bind(('', PORT))
-            tcp.listen(5)
+            # tcp = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            # tcp.setblocking(0)
+            # tcp.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            # tcp.bind(('', PORT))
+            # tcp.listen(5)
             mode = "LISTENING"
             modem.connect()
             modem.start_dial_tone()
