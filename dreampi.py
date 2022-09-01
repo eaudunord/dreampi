@@ -384,17 +384,18 @@ class Modem(object):
             self._device, self._speed, timeout=0
         )
     
-    def connect_netlink(self):
+    def connect_netlink(self,speed=115200,timeout = 0.01):
         if self._serial:
             self.disconnect()
 
         logger.info("Opening serial interface to {}".format(self._device))
         self._serial = serial.Serial(
-            self._device, self._speed, timeout=0.003
+            self._device, speed, timeout=timeout
         )
 
     def disconnect(self):
         if self._serial and self._serial.isOpen():
+            self._serial.flush()
             self._serial.close()
             self._serial = None
             logger.info("Serial interface terminated")
@@ -449,6 +450,28 @@ class Modem(object):
         # time.sleep(5)
         logger.info("Call answered!")
         logger.info("Connected")
+
+    def query_modem(self, command, timeout=3, response = "OK"): #this function assumes we're being passed a non-blocking modem
+              
+        final_command = ("%s\r\n" % command).encode()
+        self._serial.write(final_command)
+        print(final_command.decode())
+
+        start = time.time()
+
+        line = b""
+        while True:
+            new_data = self._serial.readline().strip()
+
+            if not new_data: #non-blocking modem will end up here when timeout reached, try until this function's timeout is reached.
+                if time.time() - start < timeout:
+                    continue
+                raise IOError()
+
+            line = line + new_data
+            
+            if response.encode() in line:
+                return  # Valid response
 
     def send_command(self, command, timeout=60, ignore_responses=None):
         ignore_responses = ignore_responses or []  # Things to completely ignore
@@ -512,9 +535,9 @@ class GracefulKiller(object):
         logging.warning("Received signal: %s", signum)
         self.kill_now = True
 
-def do_netlink(side,dial_string,device_and_speed):
+def do_netlink(side,dial_string,modem):
     # ser = serial.Serial(device_and_speed[0], device_and_speed[1], timeout=0.005)
-    state, opponent  = netlink.netlink_setup(device_and_speed,side,dial_string)
+    state, opponent  = netlink.netlink_setup(device_and_speed,side,dial_string,modem)
     netlink.netlink_exchange(side,state,opponent)
 
 dmz_patcher_in = None
@@ -674,8 +697,10 @@ def process():
 
 
                         logger.info("Heard: %s" % dial_string)
-
-                        mode = "ANSWERING"
+                        if client == "direct_dial":
+                            mode = "NETLINK ANSWERING"
+                        else:
+                            mode = "ANSWERING"
                         modem.stop_dial_tone()
                         time_digit_heard = now
                 except (TypeError, ValueError):
@@ -683,18 +708,22 @@ def process():
         elif mode == "ANSWERING":
             if (now - time_digit_heard).total_seconds() > 8.0:
                 time_digit_heard = None
-                if client == "ppp_internet":
-                    modem.answer()
-                    modem.disconnect()
-                    mode = "CONNECTED"
-                elif client == "direct_dial":
-                    # modem.connect_netlink()
-                    modem.netlink_answer()
-                    modem.disconnect()
+                modem.answer()
+                modem.disconnect()
+                mode = "CONNECTED"
+        elif mode == "NETLINK ANSWERING":
+            if (now - time_digit_heard).total_seconds() > 8.0:
+                time_digit_heard = None
+                modem.connect_netlink(speed=57600,timeout=0.01) #non-blocking version
+                try:
+                    modem.query_modem("ATA", timeout=120, response = "CONNECT")
                     mode = "NETLINK_CONNECTED"
-
+                except IOError:
+                    modem.connect()
+                    mode = "LISTENING"
+                    modem.start_dial_tone()
         elif mode == "CONNECTED":
-            # dcnow.go_online(dreamcast_ip)
+            # dcnow.go_online(dreamcast_ip) #don't start dcnow until figure out slow come down
             # old monitoring loop
             # We start watching /var/log/messages for the hang up message
             # for line in sh.tail("-f", "/var/log/messages", "-n", "1", _iter=True):
@@ -728,7 +757,7 @@ def process():
                             kill_ppp = True
                             kill_foe = True
 
-                        kill_ppp = True
+                        kill_ppp = True #delete this when server is fixed to send to wait side
                     # conn.shutdown(socket.SHUT_RDWR)
                     # conn.close()
                 if kill_foe == True:
@@ -740,7 +769,7 @@ def process():
                     foe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                     # foe.setblocking(0)
                     foe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-                    ready = select.select([],[foe],[])
+                    ready = select.select([],[foe],[]) #blocking
                     if ready[1]:
                         foe.connect((foe_ip,65433))
                         foe.sendall(b'ppp_kill')
@@ -767,25 +796,18 @@ def process():
                 except: #ppp is down
                     break
             for line in sh.tail("-f", "/var/log/messages", "-n", "1", _iter=True):
-                if "pppd" and "Exit" in line:#wait for pppd to execute the ip-down script
+                if "pppd" in line and "Exit" in line:#wait for pppd to execute the ip-down script
                     logger.info("Detected modem hang up, going back to listening")
                     break
-            # dcnow.go_offline()
+            # dcnow.go_offline() #changed dcnow to wait 15 seconds for event instead of sleeping. Should be faster.
             mode = "LISTENING"
             # modem = Modem(device_and_speed[0], device_and_speed[1], dial_tone_enabled)
             modem.connect()
             if dial_tone_enabled:
                 modem.start_dial_tone()
         elif mode == "NETLINK_CONNECTED":
-            # tcp.shutdown(socket.SHUT_RDWR)
-            # tcp.close()
-            do_netlink(side,dial_string,device_and_speed)
+            do_netlink(side,dial_string,modem)
             logger.info("Netlink Disconnected")
-            # tcp = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            # tcp.setblocking(0)
-            # tcp.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            # tcp.bind(('', PORT))
-            # tcp.listen(5)
             mode = "LISTENING"
             modem.connect()
             modem.start_dial_tone()

@@ -22,6 +22,7 @@ UPDATE_INTERVAL = 15
 
 CONFIGURATION_FILE = os.path.expanduser("~/.dreampi.json")
 
+dcnow_stop = threading.Event()
 
 def scan_mac_address():
     mac = get_mac()
@@ -69,9 +70,12 @@ class DreamcastNowThread(threading.Thread):
                 post_update()
             except:
                 logger.exception("Couldn't update Dreamcast Now!")
-            time.sleep(UPDATE_INTERVAL)
+            # time.sleep(UPDATE_INTERVAL)
+            dcnow_stop.wait(UPDATE_INTERVAL)
 
     def stop(self):
+        global dcnow_stop
+        dcnow_stop.set()
         self._running = False
         self.join()
 
@@ -99,7 +103,7 @@ class DreamcastNowService(object):
                 content = json.loads(settings.read())
                 self._enabled = content["enabled"]
 
-    def go_online(self, dreamcast_ip):
+    def go_online(self, dreamcast_ip, event_stop):
         if not self._enabled:
             return
 
