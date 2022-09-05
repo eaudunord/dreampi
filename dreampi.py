@@ -539,7 +539,7 @@ class GracefulKiller(object):
 
 def do_netlink(side,dial_string,modem):
     # ser = serial.Serial(device_and_speed[0], device_and_speed[1], timeout=0.005)
-    state, opponent  = netlink.netlink_setup(device_and_speed,side,dial_string,modem)
+    state, opponent  = netlink.netlink_setup(side,dial_string,modem)
     netlink.netlink_exchange(side,state,opponent)
 
 dmz_patcher_in = None
@@ -642,8 +642,14 @@ def process():
         time.sleep(5)
 
     modem = Modem(device_and_speed[0], device_and_speed[1], dial_tone_enabled)
-    dreamcast_ip = autoconfigure_ppp(modem.device_name, modem.device_speed)
-    lan_ip = start_dmz_patching(dreamcast_ip)
+    def get_ip_address():
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        return s.getsockname()[0]
+
+    pi_lan = get_ip_address()
+    dreamcast_ip = autoconfigure_ppp(modem.device_name, modem.device_speed,pi_lan)
+    start_dmz_patching(dreamcast_ip)
 
     # Get a port forwarding object, now that we know the DC IP.
     # port_forwarding = PortForwarding(dreamcast_ip, logger)
@@ -697,13 +703,15 @@ def process():
                         dial_string = parsed['dial_string']
                         side = parsed['side']
                         foe_ip = ""
-                        if lan_ip == "192.168.0.80":
+                        if pi_lan == "192.168.0.80":
                             foe_ip = "192.168.0.79"
-                        if lan_ip == "192.168.0.79":
+                        if pi_lan == "192.168.0.79":
                             foe_ip = "192.168.0.80"
                         if dial_string == "1234567":
                             time.sleep(15)
+                            client = "direct_dial"
                             dial_string = foe_ip
+                            side = "calling"
                         logger.info("Heard: %s" % dial_string)
                         if client == "direct_dial":
                             mode = "NETLINK ANSWERING"
@@ -770,9 +778,9 @@ def process():
                     # conn.close()
                 if kill_foe == True:
                     foe_ip = ""
-                    if lan_ip == "192.168.0.80":
+                    if pi_lan == "192.168.0.80":
                         foe_ip = "192.168.0.79"
-                    if lan_ip == "192.168.0.79":
+                    if pi_lan == "192.168.0.79":
                         foe_ip = "192.168.0.80"
                     foe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                     # foe.setblocking(0)
