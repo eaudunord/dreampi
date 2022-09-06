@@ -547,7 +547,7 @@ dmz_patcher_out = None
 
 
 def start_dmz_patching(dreamcast_IP):
-    # This should allow the KDDI server to reach the pi for people who DMZ
+    # This should allow traffic to reach the pi for people who DMZ, or forward to the DC IP.
     global dmz_patcher_in
     global dmz_patcher_out
 
@@ -568,7 +568,8 @@ def start_dmz_patching(dreamcast_IP):
     rule.add_match(match)
     rule.dst = dreamcast_IP
     rule.create_target("DNAT")
-    rule.target.to_destination = pi_lan+":65433"
+    rule.target.to_destination = pi_lan+":65433" #traffic heading to dreamcast on port 65432 gets redirected to pi on port 65433. 
+    #This is for my LAN environment. Ultimately server should send on 65433 and change dport to 65433. 
     chain.append_rule(rule)
 
     dmz_patcher_in = rule
@@ -708,11 +709,42 @@ def process():
                         if pi_lan == "192.168.0.79":
                             foe_ip = "192.168.0.80"
                         if dial_string == "1234567":
-                            time.sleep(15)
                             client = "direct_dial"
                             dial_string = foe_ip
                             side = "calling"
+                            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                            sock.settimeout(15)
+                            try: #let's make sure the waiting side is ready for the call
+                                sock.connect(dial_string,65433)
+                                sock.sendall(b'kddiConnect')
+                            except socket.error:
+                                logger.info('socket error')
+                                raise IOError
+                            ready = select.select([sock], [], [],15) #wait up to 15 seconds for acknowledgment
+                            if ready[0]:
+                                response = sock.recv(1024)
+                                if response == b'kddiOK':
+                                    time.sleep(5) #give the waiting side a little head start
+                            if not ready:
+                                raise IOError
                         logger.info("Heard: %s" % dial_string)
+                        if dial_string == "00": #code for capcom direct waiting
+                            ready = select.select([tcp], [], [],15) #wait up to 15 seconds for caller to signal it's ready
+                            if ready[0]:
+                                conn, addr = tcp.accept()
+                                try:
+                                    data = conn.recv(1024)
+                                    logger.info(data)
+                                except socket.error:
+                                    data = ''
+                                    pass
+                                if data == b'kddiConnect':
+                                    conn.sendall(b'kddiOK')
+                                    logger.info("kddiHandshake")
+                                    client = "direct_dial"
+                                    side = "waiting"
+                            if not ready:
+                                raise IOError
                         if client == "direct_dial":
                             mode = "NETLINK ANSWERING"
                         else:
@@ -721,6 +753,11 @@ def process():
                         time_digit_heard = now
                 except (TypeError, ValueError):
                     pass
+                except IOError: #bail and restart
+                    modem.stop_dial_tone()
+                    modem.connect()
+                    mode = "LISTENING"
+                    modem.start_dial_tone()
         elif mode == "ANSWERING":
             if (now - time_digit_heard).total_seconds() > 8.0:
                 time_digit_heard = None
