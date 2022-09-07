@@ -386,13 +386,13 @@ class Modem(object):
             self._device, self._speed, timeout=0
         )
     
-    def connect_netlink(self,speed=115200,timeout = 0.01):
+    def connect_netlink(self,speed=115200,timeout = 0.01,rtscts = False):
         if self._serial:
             self.disconnect()
 
         logger.info("Opening serial interface to {}".format(self._device))
         self._serial = serial.Serial(
-            self._device, speed, timeout=timeout
+            self._device, speed, timeout=timeout, rtscts = rtscts
         )
 
     def disconnect(self):
@@ -767,8 +767,9 @@ def process():
         elif mode == "NETLINK ANSWERING":
             if (now - time_digit_heard).total_seconds() > 8.0:
                 time_digit_heard = None
-                modem.connect_netlink(speed=57600,timeout=0.01) #non-blocking version
+                modem.connect_netlink(speed=57600,timeout=0.01,rtscts = True) #non-blocking version
                 try:
+                    modem.query_modem("AT&K3", timeout=120, response = "OK")
                     modem.query_modem("ATA", timeout=120, response = "CONNECT")
                     mode = "NETLINK_CONNECTED"
                 except IOError:
