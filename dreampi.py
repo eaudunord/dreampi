@@ -209,7 +209,7 @@ proxyarp
 ktune
 noccp
     """.strip()
-    if pi_ip == "192.168.0.80":
+    if pi_ip == "192.168.0.80": #workaround for my local testing. Otherwise both pis will try to use x.98 for the dreamcast.
         this_ip = find_next_unused_ip(".".join(subnet) + ".200")
     else:
         this_ip = find_next_unused_ip(".".join(subnet) + ".100")
@@ -650,7 +650,7 @@ def process():
 
     pi_lan = get_ip_address()
     dreamcast_ip = autoconfigure_ppp(modem.device_name, modem.device_speed,pi_lan)
-    start_dmz_patching(dreamcast_ip)
+    # start_dmz_patching(dreamcast_ip) # disable for now
 
     # Get a port forwarding object, now that we know the DC IP.
     # port_forwarding = PortForwarding(dreamcast_ip, logger)
@@ -667,7 +667,7 @@ def process():
     time_digit_heard = None
 
     dcnow = DreamcastNowService()
-
+    KDDIswitch = False
     while True:
         if killer.kill_now:
             break
@@ -685,6 +685,7 @@ def process():
                     data = ''
                     pass
                 if data == b'ppp_kill':
+                    KDDIswitch = True
                     logger.info("kill packet was late")
                 # conn.shutdown(socket.SHUT_RDWR)
                 # conn.close()
@@ -708,10 +709,12 @@ def process():
                             foe_ip = "192.168.0.79"
                         if pi_lan == "192.168.0.79":
                             foe_ip = "192.168.0.80"
-                        if dial_string == "1234567":
-                            client = "direct_dial"
-                            dial_string = foe_ip
-                            side = "calling"
+                        logger.info("Heard: %s" % dial_string)
+                        if KDDIswitch == True and side == "calling":
+                            KDDIswitch = False
+                            # client = "direct_dial"
+                            # dial_string = foe_ip
+                            # side = "calling"
                             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                             sock.settimeout(15)
                             try: #let's make sure the waiting side is ready for the call
@@ -727,8 +730,9 @@ def process():
                                     time.sleep(5) #give the waiting side a little head start
                             if not ready:
                                 raise IOError
-                        logger.info("Heard: %s" % dial_string)
-                        if dial_string == "00": #code for capcom direct waiting
+                        
+                        if KDDIswitch == True and side == "waiting": #switch for capcom direct waiting
+                            KDDIswitch = False
                             ready = select.select([tcp], [], [],15) #wait up to 15 seconds for caller to signal it's ready
                             if ready[0]:
                                 conn, addr = tcp.accept()
@@ -741,8 +745,8 @@ def process():
                                 if data == b'kddiConnect':
                                     conn.sendall(b'kddiOK')
                                     logger.info("kddiHandshake")
-                                    client = "direct_dial"
-                                    side = "waiting"
+                                    # client = "direct_dial"
+                                    # side = "waiting"
                             if not ready:
                                 raise IOError
                         if client == "direct_dial":
@@ -769,7 +773,7 @@ def process():
                 time_digit_heard = None
                 modem.connect_netlink(speed=57600,timeout=0.01,rtscts = True) #non-blocking version
                 try:
-                    modem.query_modem("AT&K3", timeout=120, response = "OK")
+                    # modem.query_modem("AT&K3", timeout=120, response = "OK")
                     modem.query_modem("ATA", timeout=120, response = "CONNECT")
                     mode = "NETLINK_CONNECTED"
                 except IOError:
@@ -809,26 +813,27 @@ def process():
                             pass
                         if addr[0] == kddi_server: #make sure this really came from the server and not a salty foe
                             kill_ppp = True
-                            kill_foe = True
+                            # kill_foe = True
+                            KDDIswitch = True #The next call in will be trying to establish a KDDI link
 
-                        kill_ppp = True #delete this when server is fixed to send to wait side
+                        # kill_ppp = True #delete this when server is fixed to send to wait side
                     # conn.shutdown(socket.SHUT_RDWR)
                     # conn.close()
-                if kill_foe == True:
-                    foe_ip = ""
-                    if pi_lan == "192.168.0.80":
-                        foe_ip = "192.168.0.79"
-                    if pi_lan == "192.168.0.79":
-                        foe_ip = "192.168.0.80"
-                    foe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                    # foe.setblocking(0)
-                    foe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-                    ready = select.select([],[foe],[]) #blocking
-                    if ready[1]:
-                        foe.connect((foe_ip,65433))
-                        foe.sendall(b'ppp_kill')
-                        # foe.shutdown(socket.SHUT_RDWR)
-                        # foe.close()
+                # if kill_foe == True:
+                #     foe_ip = ""
+                #     if pi_lan == "192.168.0.80":
+                #         foe_ip = "192.168.0.79"
+                #     if pi_lan == "192.168.0.79":
+                #         foe_ip = "192.168.0.80"
+                #     foe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                #     # foe.setblocking(0)
+                #     foe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                #     ready = select.select([],[foe],[]) #blocking
+                #     if ready[1]:
+                #         foe.connect((foe_ip,65433))
+                #         foe.sendall(b'ppp_kill')
+                #         # foe.shutdown(socket.SHUT_RDWR)
+                #         # foe.close()
                                                        
                 if kill_ppp == True:
                     # if time.time() - kill_received > 3: #failsafe to start the reset if DC doesn't terminate ppp correctly
@@ -917,7 +922,7 @@ def main():
         stop_process("dcgamespy")
         stop_process("dcvoip")
         stop_afo_patching()
-        stop_dmz_patching()
+        # stop_dmz_patching()
 
         config_server.stop()
         logger.info("Dreampi quit successfully")
