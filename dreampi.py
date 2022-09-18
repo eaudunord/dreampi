@@ -564,7 +564,7 @@ def start_dmz_patching(dreamcast_IP):
     rule = iptc.Rule()
     rule.protocol = "tcp"
     match = iptc.Match(rule, "tcp")
-    match.dport = "65432"
+    match.dport = "65433"
     rule.add_match(match)
     rule.dst = dreamcast_IP
     rule.create_target("DNAT")
@@ -583,7 +583,7 @@ def start_dmz_patching(dreamcast_IP):
     match.dport = "65433"
     rule.add_match(match)
     target = iptc.Target(rule, "MASQUERADE")
-    # target.to_ports = "65432"
+    target.to_ports = "65433"
     rule.target = target
     chain.insert_rule(rule)
 
@@ -676,17 +676,17 @@ def process():
 
         if mode == "LISTENING":
             ready = select.select([tcp], [], [],0) #0 is polling select so it doesn't block
-            if ready[0]:
-                conn, addr = tcp.accept()
-                try:
-                    data = conn.recv(1024)
-                    logger.info(data)
-                except socket.error:
-                    data = ''
-                    pass
-                if data == b'ppp_kill':
-                    KDDIswitch = True
-                    logger.info("kill packet was late")
+            # if ready[0]:
+            #     conn, addr = tcp.accept()
+            #     try:
+            #         data = conn.recv(1024)
+            #         logger.info(data)
+            #     except socket.error:
+            #         data = ''
+            #         pass
+            #     if data == b'ppp_kill':
+            #         KDDIswitch = True
+            #         logger.info("kill packet was late")
                 # conn.shutdown(socket.SHUT_RDWR)
                 # conn.close()
             modem.update()
@@ -704,51 +704,79 @@ def process():
                         client = parsed['client']
                         dial_string = parsed['dial_string']
                         side = parsed['side']
-                        foe_ip = ""
-                        if pi_lan == "192.168.0.80":
-                            foe_ip = "192.168.0.79"
-                        if pi_lan == "192.168.0.79":
-                            foe_ip = "192.168.0.80"
+                        # foe_ip = ""
+                        # if pi_lan == "192.168.0.80":
+                        #     foe_ip = "192.168.0.79"
+                        # if pi_lan == "192.168.0.79":
+                        #     foe_ip = "192.168.0.80"
+                        # if dial_string == "9619522265" or dial_string == "3026524985":
+                        #     side = "calling"
+                        #     client = "direct_dial"
+                        #     dial_string = foe_ip
+                        #     KDDIswitch = True
+                        #     time.sleep(7)
                         logger.info("Heard: %s" % dial_string)
-                        if KDDIswitch == True and side == "calling":
-                            KDDIswitch = False
-                            # client = "direct_dial"
-                            # dial_string = foe_ip
-                            # side = "calling"
-                            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                            sock.settimeout(15)
-                            try: #let's make sure the waiting side is ready for the call
-                                sock.connect(dial_string,65433)
-                                sock.sendall(b'kddiConnect')
-                            except socket.error:
-                                logger.info('socket error')
-                                raise IOError
-                            ready = select.select([sock], [], [],15) #wait up to 15 seconds for acknowledgment
-                            if ready[0]:
-                                response = sock.recv(1024)
-                                if response == b'kddiOK':
-                                    time.sleep(5) #give the waiting side a little head start
-                            if not ready:
-                                raise IOError
+                        if dial_string == "00":
+                            side = "waiting"
+                            client = "direct_dial"
+                            KDDIswitch = True
+                        if client == "ppp_internet":
+                            try:
+                                # kddi_opponent = "859" + dial_string.split("859")[1]
+                                kddi_opponent = dial_string
+                                kddi_lookup = "http://dc.dude22072.com/kddi/dialplandb.php?phoneNumber=%s" % kddi_opponent
+                                response = urllib2.urlopen(kddi_lookup)
+                                dial_string = response.read()
+                                side = "calling"
+                                client = "direct_dial"
+                                time.sleep(5)
+                            except IndexError:
+                                pass
+                            except urllib2.HTTPError:
+                                pass
                         
-                        if KDDIswitch == True and side == "waiting": #switch for capcom direct waiting
-                            KDDIswitch = False
-                            ready = select.select([tcp], [], [],15) #wait up to 15 seconds for caller to signal it's ready
-                            if ready[0]:
-                                conn, addr = tcp.accept()
-                                try:
-                                    data = conn.recv(1024)
-                                    logger.info(data)
-                                except socket.error:
-                                    data = ''
-                                    pass
-                                if data == b'kddiConnect':
-                                    conn.sendall(b'kddiOK')
-                                    logger.info("kddiHandshake")
-                                    # client = "direct_dial"
-                                    # side = "waiting"
-                            if not ready:
-                                raise IOError
+                        # if KDDIswitch == True and side == "calling":
+                        #     logger.info("switch true and calling")
+                        #     KDDIswitch = False
+                        #     client = "direct_dial"
+                        #     # dial_string = foe_ip
+                        #     # side = "calling"
+                        #     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                        #     sock.settimeout(15)
+                        #     try: #let's make sure the waiting side is ready for the call
+                        #         sock.connect(dial_string,65433)
+                        #         sock.sendall(b'kddiConnect')
+                        #     except socket.error:
+                        #         logger.info('socket error')
+                        #         raise IOError
+                        #     ready = select.select([sock], [], [],15) #wait up to 15 seconds for acknowledgment
+                        #     if ready[0]:
+                        #         response = sock.recv(1024)
+                        #         if response == b'kddiOK':
+                        #             time.sleep(5) #give the waiting side a little head start
+                        #     if not ready:
+                        #         raise IOError
+                        
+                        # if KDDIswitch == True and side == "waiting": #switch for capcom direct waiting
+                        #     logger.info("switch true and waiting")
+                        #     KDDIswitch = False
+                        #     client = "direct_dial"
+                        #     ready = select.select([tcp], [], [],15) #wait up to 15 seconds for caller to signal it's ready
+                        #     if ready[0]:
+                        #         conn, addr = tcp.accept()
+                        #         try:
+                        #             data = conn.recv(1024)
+                        #             logger.info(data)
+                        #         except socket.error:
+                        #             data = ''
+                        #             pass
+                        #         if data == b'kddiConnect':
+                        #             conn.sendall(b'kddiOK')
+                        #             logger.info("kddiHandshake")
+                        #             client = "direct_dial"
+                        #             # side = "waiting"
+                        #     if not ready:
+                        #         raise IOError
                         if client == "direct_dial":
                             mode = "NETLINK ANSWERING"
                         else:
@@ -774,7 +802,7 @@ def process():
                 modem.connect_netlink(speed=57600,timeout=0.01,rtscts = True) #non-blocking version
                 try:
                     # modem.query_modem("AT&K3", timeout=120, response = "OK")
-                    modem.query_modem("ATA", timeout=120, response = "CONNECT")
+                    modem.query_modem("AT%E0A", timeout=120, response = "CONNECT")
                     mode = "NETLINK_CONNECTED"
                 except IOError:
                     modem.connect()
@@ -816,7 +844,7 @@ def process():
                             # kill_foe = True
                             KDDIswitch = True #The next call in will be trying to establish a KDDI link
 
-                        # kill_ppp = True #delete this when server is fixed to send to wait side
+                        kill_ppp = True #delete this when server is fixed to send to wait side
                     # conn.shutdown(socket.SHUT_RDWR)
                     # conn.close()
                 # if kill_foe == True:
