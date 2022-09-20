@@ -1,6 +1,6 @@
 /dreampi1
 /dreampi2
-
+/kddi_releases
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

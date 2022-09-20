@@ -454,8 +454,10 @@ class Modem(object):
         logger.info("Connected")
 
     def query_modem(self, command, timeout=3, response = "OK"): #this function assumes we're being passed a non-blocking modem
-              
-        final_command = ("%s\r\n" % command).encode()
+        if isinstance(command, bytes):
+            final_command = command + b'\r\n'
+        else:
+            final_command = ("%s\r\n" % command).encode()      
         self._serial.write(final_command)
         print(final_command.decode())
 
@@ -473,6 +475,8 @@ class Modem(object):
             line = line + new_data
             
             if response.encode() in line:
+                if response != "OK":
+                    logger.info(line.decode())
                 return  # Valid response
 
     def send_command(self, command, timeout=60, ignore_responses=None):
@@ -550,6 +554,12 @@ def start_dmz_patching(dreamcast_IP):
     # This should allow traffic to reach the pi for people who DMZ, or forward to the DC IP.
     global dmz_patcher_in
     global dmz_patcher_out
+    dmz_patcher_in = []
+    dmz_patcher_out = []
+
+    portRedirect = [{"protocol":"tcp","port":"65432"},
+    {"protocol":"udp","port":"20001"},
+    {"protocol":"udp","port":"20002"}]
 
     def get_ip_address():
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -557,37 +567,36 @@ def start_dmz_patching(dreamcast_IP):
         return s.getsockname()[0]
 
     pi_lan = get_ip_address()
+    for redirect in enumerate(portRedirect):
+        table = iptc.Table(iptc.Table.NAT)
+        chain = iptc.Chain(table, "PREROUTING")
 
-    table = iptc.Table(iptc.Table.NAT)
-    chain = iptc.Chain(table, "PREROUTING")
+        rule = iptc.Rule()
+        rule.protocol = redirect["protocol"]
+        match = iptc.Match(rule, redirect["protocol"])
+        match.dport = redirect["port"]
+        rule.add_match(match)
+        rule.dst = dreamcast_IP
+        rule.create_target("DNAT")
+        rule.target.to_destination = pi_lan+":"+ redirect["port"] 
+        chain.append_rule(rule)
 
-    rule = iptc.Rule()
-    rule.protocol = "tcp"
-    match = iptc.Match(rule, "tcp")
-    match.dport = "65433"
-    rule.add_match(match)
-    rule.dst = dreamcast_IP
-    rule.create_target("DNAT")
-    rule.target.to_destination = pi_lan+":65433" #traffic heading to dreamcast on port 65432 gets redirected to pi on port 65433. 
-    #This is for my LAN environment. Ultimately server should send on 65433 and change dport to 65433. 
-    chain.append_rule(rule)
+        dmz_patcher_in.append(rule)
 
-    dmz_patcher_in = rule
+        table = iptc.Table(iptc.Table.NAT)
+        chain = iptc.Chain(table, "POSTROUTING")
+        rule = iptc.Rule()
+        rule.protocol = redirect["protocol"]
+        rule.dst = pi_lan
+        match = iptc.Match(rule, redirect["protocol"])
+        match.dport = redirect["port"]
+        rule.add_match(match)
+        target = iptc.Target(rule, "MASQUERADE")
+        target.to_ports = redirect["port"]
+        rule.target = target
+        chain.insert_rule(rule)
 
-    table = iptc.Table(iptc.Table.NAT)
-    chain = iptc.Chain(table, "POSTROUTING")
-    rule = iptc.Rule()
-    rule.protocol = "tcp"
-    rule.dst = pi_lan
-    match = iptc.Match(rule, "tcp")
-    match.dport = "65433"
-    rule.add_match(match)
-    target = iptc.Target(rule, "MASQUERADE")
-    target.to_ports = "65433"
-    rule.target = target
-    chain.insert_rule(rule)
-
-    dmz_patcher_out = rule
+        dmz_patcher_out.append(rule)
 
 
     logger.info("DMZ routing enabled")
@@ -598,22 +607,24 @@ def stop_dmz_patching():
     global dmz_patcher_in
     global dmz_patcher_out
     if dmz_patcher_in:
-        table = iptc.Table(iptc.Table.NAT)
-        chain = iptc.Chain(table, "PREROUTING")
-        chain.delete_rule(dmz_patcher_in)
+        for redirect in dmz_patcher_in:
+            table = iptc.Table(iptc.Table.NAT)
+            chain = iptc.Chain(table, "PREROUTING")
+            chain.delete_rule(redirect)
     if dmz_patcher_out:
-        table = iptc.Table(iptc.Table.NAT)
-        chain = iptc.Chain(table, "POSTROUTING")
-        chain.delete_rule(dmz_patcher_out)
-        logger.info("DMZ routing disabled")
+        for redirect in dmz_patcher_out:
+            table = iptc.Table(iptc.Table.NAT)
+            chain = iptc.Chain(table, "POSTROUTING")
+            chain.delete_rule(redirect)
+    logger.info("DMZ routing disabled")
 
 def process():
-    PORT = 65433
-    tcp = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    tcp.setblocking(0)
-    tcp.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    tcp.bind(('', PORT))
-    tcp.listen(5)
+    # PORT = 65433
+    # tcp = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    # tcp.setblocking(0)
+    # tcp.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    # tcp.bind(('', PORT))
+    # tcp.listen(5)
 
     killer = GracefulKiller()
 
@@ -650,7 +661,7 @@ def process():
 
     pi_lan = get_ip_address()
     dreamcast_ip = autoconfigure_ppp(modem.device_name, modem.device_speed,pi_lan)
-    # start_dmz_patching(dreamcast_ip) # disable for now
+    # start_dmz_patching(dreamcast_ip)
 
     # Get a port forwarding object, now that we know the DC IP.
     # port_forwarding = PortForwarding(dreamcast_ip, logger)
@@ -667,7 +678,6 @@ def process():
     time_digit_heard = None
 
     dcnow = DreamcastNowService()
-    KDDIswitch = False
     while True:
         if killer.kill_now:
             break
@@ -675,7 +685,7 @@ def process():
         now = datetime.now()
 
         if mode == "LISTENING":
-            ready = select.select([tcp], [], [],0) #0 is polling select so it doesn't block
+            # ready = select.select([tcp], [], [],0) #0 is polling select so it doesn't block
             # if ready[0]:
             #     conn, addr = tcp.accept()
             #     try:
@@ -719,17 +729,21 @@ def process():
                         if dial_string == "00":
                             side = "waiting"
                             client = "direct_dial"
-                            KDDIswitch = True
                         if client == "ppp_internet":
                             try:
                                 # kddi_opponent = "859" + dial_string.split("859")[1]
                                 kddi_opponent = dial_string
                                 kddi_lookup = "http://dc.dude22072.com/kddi/dialplandb.php?phoneNumber=%s" % kddi_opponent
                                 response = urllib2.urlopen(kddi_lookup)
-                                dial_string = response.read()
-                                side = "calling"
-                                client = "direct_dial"
-                                time.sleep(5)
+                                ip = response.read()
+                                if len(ip) == 0:
+                                    pass
+                                else:
+                                    dial_string = ip
+                                    logger.info(dial_string)
+                                    side = "calling"
+                                    client = "direct_dial"
+                                    time.sleep(5)
                             except IndexError:
                                 pass
                             except urllib2.HTTPError:
@@ -801,8 +815,8 @@ def process():
                 time_digit_heard = None
                 modem.connect_netlink(speed=57600,timeout=0.01,rtscts = True) #non-blocking version
                 try:
-                    # modem.query_modem("AT&K3", timeout=120, response = "OK")
-                    modem.query_modem("AT%E0A", timeout=120, response = "CONNECT")
+                    modem.query_modem(b"AT%E0\V1")
+                    modem.query_modem("ATA", timeout=120, response = "CONNECT")
                     mode = "NETLINK_CONNECTED"
                 except IOError:
                     modem.connect()
@@ -824,27 +838,27 @@ def process():
 
             while True: #New monitoring loop
                 time.sleep(0.5)
-                ready = select.select([tcp], [], [],0) #0 is polling select so it doesn't block
-                if ready[0]:
-                    conn, addr = tcp.accept()
-                    try:
-                        data = conn.recv(1024)
-                        logger.info(data)
-                    except socket.error:
-                        data = ''
-                        pass
-                    if data == b'ppp_kill': #Not all KDDI games were terminating PPP properly
-                        kddi_server = ''
-                        try:
-                            kddi_server = socket.gethostbyname('direct2.capcom.co.jp')
-                        except socket.error: #if for some reason DNS lookup fails
-                            pass
-                        if addr[0] == kddi_server: #make sure this really came from the server and not a salty foe
-                            kill_ppp = True
-                            # kill_foe = True
-                            KDDIswitch = True #The next call in will be trying to establish a KDDI link
+                # ready = select.select([tcp], [], [],0) #0 is polling select so it doesn't block
+                # if ready[0]:
+                #     conn, addr = tcp.accept()
+                #     try:
+                #         data = conn.recv(1024)
+                #         logger.info(data)
+                #     except socket.error:
+                #         data = ''
+                #         pass
+                #     if data == b'ppp_kill': #Not all KDDI games were terminating PPP properly
+                #         kddi_server = ''
+                #         try:
+                #             kddi_server = socket.gethostbyname('direct2.capcom.co.jp')
+                #         except socket.error: #if for some reason DNS lookup fails
+                #             pass
+                #         if addr[0] == kddi_server: #make sure this really came from the server and not a salty foe
+                #             kill_ppp = True
+                #             # kill_foe = True
+                #             KDDIswitch = True #The next call in will be trying to establish a KDDI link
 
-                        kill_ppp = True #delete this when server is fixed to send to wait side
+                #         kill_ppp = True #delete this when server is fixed to send to wait side
                     # conn.shutdown(socket.SHUT_RDWR)
                     # conn.close()
                 # if kill_foe == True:
@@ -863,15 +877,15 @@ def process():
                 #         # foe.shutdown(socket.SHUT_RDWR)
                 #         # foe.close()
                                                        
-                if kill_ppp == True:
-                    # if time.time() - kill_received > 3: #failsafe to start the reset if DC doesn't terminate ppp correctly
-                    with open(os.devnull, 'wb') as devnull:
-                        try:
-                            subprocess.call(["sudo", "killall", "-HUP", "pppd"], stderr=devnull)
-                            logger.info('executed kill command')
-                            break
-                        except:#if ppp is already coming down this might give an exception
-                            break
+                # if kill_ppp == True:
+                #     # if time.time() - kill_received > 3: #failsafe to start the reset if DC doesn't terminate ppp correctly
+                #     with open(os.devnull, 'wb') as devnull:
+                #         try:
+                #             subprocess.call(["sudo", "killall", "-HUP", "pppd"], stderr=devnull)
+                #             logger.info('executed kill command')
+                #             break
+                #         except:#if ppp is already coming down this might give an exception
+                #             break
                 if ppp_found == False:
                     try:
                         ppp_info = sh.ifconfig("ppp0") #check if we have an active PPP link

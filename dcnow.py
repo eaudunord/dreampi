@@ -103,10 +103,11 @@ class DreamcastNowService(object):
                 content = json.loads(settings.read())
                 self._enabled = content["enabled"]
 
-    def go_online(self, dreamcast_ip, event_stop):
+    def go_online(self, dreamcast_ip):
         if not self._enabled:
             return
-
+        global dcnow_stop
+        dcnow_stop = threading.Event()
         self.update_mac_address(dreamcast_ip)
         self._thread = DreamcastNowThread(self)
         self._thread.start()
