@@ -714,17 +714,6 @@ def process():
                         client = parsed['client']
                         dial_string = parsed['dial_string']
                         side = parsed['side']
-                        # foe_ip = ""
-                        # if pi_lan == "192.168.0.80":
-                        #     foe_ip = "192.168.0.79"
-                        # if pi_lan == "192.168.0.79":
-                        #     foe_ip = "192.168.0.80"
-                        # if dial_string == "9619522265" or dial_string == "3026524985":
-                        #     side = "calling"
-                        #     client = "direct_dial"
-                        #     dial_string = foe_ip
-                        #     KDDIswitch = True
-                        #     time.sleep(7)
                         logger.info("Heard: %s" % dial_string)
                         if dial_string == "00":
                             side = "waiting"
@@ -733,7 +722,7 @@ def process():
                             try:
                                 # kddi_opponent = "859" + dial_string.split("859")[1]
                                 kddi_opponent = dial_string
-                                kddi_lookup = "http://dc.dude22072.com/kddi/dialplandb.php?phoneNumber=%s" % kddi_opponent
+                                kddi_lookup = "https://kddi.redreamcast.net/?phoneNumber=%s" % kddi_opponent
                                 response = urllib2.urlopen(kddi_lookup)
                                 ip = response.read()
                                 if len(ip) == 0:
@@ -743,7 +732,7 @@ def process():
                                     logger.info(dial_string)
                                     side = "calling"
                                     client = "direct_dial"
-                                    time.sleep(5)
+                                    time.sleep(7)
                             except IndexError:
                                 pass
                             except urllib2.HTTPError:
@@ -815,7 +804,7 @@ def process():
                 time_digit_heard = None
                 modem.connect_netlink(speed=57600,timeout=0.01,rtscts = True) #non-blocking version
                 try:
-                    modem.query_modem(b"AT%E0\V1")
+                    modem.query_modem(b"AT%E0W2\V1")
                     modem.query_modem("ATA", timeout=120, response = "CONNECT")
                     mode = "NETLINK_CONNECTED"
                 except IOError:

@@ -74,8 +74,6 @@ class DreamcastNowThread(threading.Thread):
             dcnow_stop.wait(UPDATE_INTERVAL)
 
     def stop(self):
-        global dcnow_stop
-        dcnow_stop.set()
         self._running = False
         self.join()
 
@@ -113,5 +111,7 @@ class DreamcastNowService(object):
         self._thread.start()
 
     def go_offline(self):
+        global dcnow_stop
+        dcnow_stop.set()
         self._thread.stop()
         self._thread = None
