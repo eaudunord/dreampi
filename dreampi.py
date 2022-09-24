@@ -544,6 +544,13 @@ class GracefulKiller(object):
 def do_netlink(side,dial_string,modem):
     # ser = serial.Serial(device_and_speed[0], device_and_speed[1], timeout=0.005)
     state, opponent  = netlink.netlink_setup(side,dial_string,modem)
+    if state == "failed":
+        for i in range(3):
+            modem._serial.write(b'+')
+            time.sleep(0.2)
+        time.sleep(4)
+        modem.send_command('ATH0')
+        return
     netlink.netlink_exchange(side,state,opponent)
 
 dmz_patcher_in = None
@@ -718,11 +725,10 @@ def process():
                         if dial_string == "00":
                             side = "waiting"
                             client = "direct_dial"
-                        if client == "ppp_internet":
+                        if dial_string[0:3] == "859":
                             try:
-                                # kddi_opponent = "859" + dial_string.split("859")[1]
                                 kddi_opponent = dial_string
-                                kddi_lookup = "https://kddi.redreamcast.net/?phoneNumber=%s" % kddi_opponent
+                                kddi_lookup = "https://dial.redreamcast.net/?phoneNumber=%s" % kddi_opponent
                                 response = urllib2.urlopen(kddi_lookup)
                                 ip = response.read()
                                 if len(ip) == 0:
@@ -733,8 +739,6 @@ def process():
                                     side = "calling"
                                     client = "direct_dial"
                                     time.sleep(7)
-                            except IndexError:
-                                pass
                             except urllib2.HTTPError:
                                 pass
                         
