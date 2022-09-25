@@ -683,7 +683,7 @@ def process():
         modem.start_dial_tone()
 
     time_digit_heard = None
-
+    saturn = True
     dcnow = DreamcastNowService()
     while True:
         if killer.kill_now:
@@ -736,6 +736,7 @@ def process():
                                 else:
                                     dial_string = ip
                                     logger.info(dial_string)
+                                    saturn = False
                                     side = "calling"
                                     client = "direct_dial"
                                     time.sleep(7)
@@ -809,6 +810,8 @@ def process():
                 modem.connect_netlink(speed=57600,timeout=0.01,rtscts = True) #non-blocking version
                 try:
                     modem.query_modem(b"AT%E0W2\V1")
+                    if saturn:
+                        modem.query_modem(b'AT+MS=V32b,1,14400,14400,14400,14400')
                     modem.query_modem("ATA", timeout=120, response = "CONNECT")
                     mode = "NETLINK_CONNECTED"
                 except IOError:
@@ -816,7 +819,8 @@ def process():
                     mode = "LISTENING"
                     modem.start_dial_tone()
         elif mode == "CONNECTED":
-            # dcnow.go_online(dreamcast_ip) #don't start dcnow until figure out slow come down
+            dcnow.go_online(dreamcast_ip) #don't start dcnow until figure out slow come down
+            print("dcnow invoked")
             # old monitoring loop
             # We start watching /var/log/messages for the hang up message
             # for line in sh.tail("-f", "/var/log/messages", "-n", "1", _iter=True):
@@ -893,7 +897,7 @@ def process():
                 if "pppd" in line and "Exit" in line:#wait for pppd to execute the ip-down script
                     logger.info("Detected modem hang up, going back to listening")
                     break
-            # dcnow.go_offline() #changed dcnow to wait 15 seconds for event instead of sleeping. Should be faster.
+            dcnow.go_offline() #changed dcnow to wait 15 seconds for event instead of sleeping. Should be faster.
             mode = "LISTENING"
             # modem = Modem(device_and_speed[0], device_and_speed[1], dial_tone_enabled)
             modem.connect()
