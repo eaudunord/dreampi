@@ -209,10 +209,7 @@ proxyarp
 ktune
 noccp
     """.strip()
-    if pi_ip == "192.168.0.80": #workaround for my local testing. Otherwise both pis will try to use x.98 for the dreamcast.
-        this_ip = find_next_unused_ip(".".join(subnet) + ".200")
-    else:
-        this_ip = find_next_unused_ip(".".join(subnet) + ".100")
+    this_ip = find_next_unused_ip(".".join(subnet) + ".100")
     dreamcast_ip = find_next_unused_ip(this_ip)
 
     logger.info("Dreamcast IP: {}".format(dreamcast_ip))
@@ -558,6 +555,7 @@ dmz_patcher_out = None
 
 
 def start_dmz_patching(dreamcast_IP):
+    # Not currently working. Will probably changes this to just run iptables commands directly
     # This should allow traffic to reach the pi for people who DMZ, or forward to the DC IP.
     global dmz_patcher_in
     global dmz_patcher_out
@@ -626,13 +624,6 @@ def stop_dmz_patching():
     logger.info("DMZ routing disabled")
 
 def process():
-    # PORT = 65433
-    # tcp = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    # tcp.setblocking(0)
-    # tcp.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    # tcp.bind(('', PORT))
-    # tcp.listen(5)
-
     killer = GracefulKiller()
 
     dial_tone_enabled = "--disable-dial-tone" not in sys.argv
@@ -692,20 +683,6 @@ def process():
         now = datetime.now()
 
         if mode == "LISTENING":
-            # ready = select.select([tcp], [], [],0) #0 is polling select so it doesn't block
-            # if ready[0]:
-            #     conn, addr = tcp.accept()
-            #     try:
-            #         data = conn.recv(1024)
-            #         logger.info(data)
-            #     except socket.error:
-            #         data = ''
-            #         pass
-            #     if data == b'ppp_kill':
-            #         KDDIswitch = True
-            #         logger.info("kill packet was late")
-                # conn.shutdown(socket.SHUT_RDWR)
-                # conn.close()
             modem.update()
             char = modem._serial.read(1).strip()
             if not char:
@@ -725,66 +702,25 @@ def process():
                         if dial_string == "00":
                             side = "waiting"
                             client = "direct_dial"
-                        if dial_string[0:3] == "859":
+                        if dial_string[0:3] == "859": #all capcom IDs will use an 859 prefix
                             try:
                                 kddi_opponent = dial_string
                                 kddi_lookup = "https://dial.redreamcast.net/?phoneNumber=%s" % kddi_opponent
                                 response = urllib2.urlopen(kddi_lookup)
                                 ip = response.read()
-                                if len(ip) == 0:
+                                if len(ip) == 0: #if the supplied number didn't match a number in the DB
                                     pass
                                 else:
                                     dial_string = ip
-                                    logger.info(dial_string)
+                                    # logger.info(dial_string)
                                     saturn = False
                                     side = "calling"
                                     client = "direct_dial"
-                                    time.sleep(7)
+                                    time.sleep(7) #delay to make sure wait is connected first
                             except urllib2.HTTPError:
                                 pass
                         
-                        # if KDDIswitch == True and side == "calling":
-                        #     logger.info("switch true and calling")
-                        #     KDDIswitch = False
-                        #     client = "direct_dial"
-                        #     # dial_string = foe_ip
-                        #     # side = "calling"
-                        #     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                        #     sock.settimeout(15)
-                        #     try: #let's make sure the waiting side is ready for the call
-                        #         sock.connect(dial_string,65433)
-                        #         sock.sendall(b'kddiConnect')
-                        #     except socket.error:
-                        #         logger.info('socket error')
-                        #         raise IOError
-                        #     ready = select.select([sock], [], [],15) #wait up to 15 seconds for acknowledgment
-                        #     if ready[0]:
-                        #         response = sock.recv(1024)
-                        #         if response == b'kddiOK':
-                        #             time.sleep(5) #give the waiting side a little head start
-                        #     if not ready:
-                        #         raise IOError
-                        
-                        # if KDDIswitch == True and side == "waiting": #switch for capcom direct waiting
-                        #     logger.info("switch true and waiting")
-                        #     KDDIswitch = False
-                        #     client = "direct_dial"
-                        #     ready = select.select([tcp], [], [],15) #wait up to 15 seconds for caller to signal it's ready
-                        #     if ready[0]:
-                        #         conn, addr = tcp.accept()
-                        #         try:
-                        #             data = conn.recv(1024)
-                        #             logger.info(data)
-                        #         except socket.error:
-                        #             data = ''
-                        #             pass
-                        #         if data == b'kddiConnect':
-                        #             conn.sendall(b'kddiOK')
-                        #             logger.info("kddiHandshake")
-                        #             client = "direct_dial"
-                        #             # side = "waiting"
-                        #     if not ready:
-                        #         raise IOError
+                       
                         if client == "direct_dial":
                             mode = "NETLINK ANSWERING"
                         else:
@@ -793,13 +729,13 @@ def process():
                         time_digit_heard = now
                 except (TypeError, ValueError):
                     pass
-                except IOError: #bail and restart
-                    modem.stop_dial_tone()
-                    modem.connect()
-                    mode = "LISTENING"
-                    modem.start_dial_tone()
+                # except IOError: #bail and restart
+                #     modem.stop_dial_tone()
+                #     modem.connect()
+                #     mode = "LISTENING"
+                #     modem.start_dial_tone()
         elif mode == "ANSWERING":
-            if (now - time_digit_heard).total_seconds() > 8.0:
+            if (now - time_digit_heard).total_seconds() > 8.0: #wait 8 seconds before doing anything? Why?
                 time_digit_heard = None
                 modem.answer()
                 modem.disconnect()
@@ -807,11 +743,11 @@ def process():
         elif mode == "NETLINK ANSWERING":
             if (now - time_digit_heard).total_seconds() > 8.0:
                 time_digit_heard = None
-                modem.connect_netlink(speed=57600,timeout=0.01,rtscts = True) #non-blocking version
+                modem.connect_netlink(speed=57600,timeout=0.1,rtscts = True) #non-blocking version
                 try:
-                    modem.query_modem(b"AT%E0W2\V1")
+                    modem.query_modem(b"AT%E0W2\V1") #don't monitor line quality, report modem speed, one line connect message
                     if saturn:
-                        modem.query_modem(b'AT+MS=V32b,1,14400,14400,14400,14400')
+                        modem.query_modem(b'AT+MS=V32b,1,14400,14400,14400,14400') #be explicit with saturn baud and modulation standard.
                     modem.query_modem("ATA", timeout=120, response = "CONNECT")
                     mode = "NETLINK_CONNECTED"
                 except IOError:
@@ -819,8 +755,7 @@ def process():
                     mode = "LISTENING"
                     modem.start_dial_tone()
         elif mode == "CONNECTED":
-            dcnow.go_online(dreamcast_ip) #don't start dcnow until figure out slow come down
-            print("dcnow invoked")
+            dcnow.go_online(dreamcast_ip)
             # old monitoring loop
             # We start watching /var/log/messages for the hang up message
             # for line in sh.tail("-f", "/var/log/messages", "-n", "1", _iter=True):
@@ -829,60 +764,11 @@ def process():
             #         time.sleep(2)  # Give the hangup some time
             #         break
             ppp_found = False
-            kill_ppp = False
-            kill_foe = False
             
 
             while True: #New monitoring loop
                 time.sleep(0.5)
-                # ready = select.select([tcp], [], [],0) #0 is polling select so it doesn't block
-                # if ready[0]:
-                #     conn, addr = tcp.accept()
-                #     try:
-                #         data = conn.recv(1024)
-                #         logger.info(data)
-                #     except socket.error:
-                #         data = ''
-                #         pass
-                #     if data == b'ppp_kill': #Not all KDDI games were terminating PPP properly
-                #         kddi_server = ''
-                #         try:
-                #             kddi_server = socket.gethostbyname('direct2.capcom.co.jp')
-                #         except socket.error: #if for some reason DNS lookup fails
-                #             pass
-                #         if addr[0] == kddi_server: #make sure this really came from the server and not a salty foe
-                #             kill_ppp = True
-                #             # kill_foe = True
-                #             KDDIswitch = True #The next call in will be trying to establish a KDDI link
-
-                #         kill_ppp = True #delete this when server is fixed to send to wait side
-                    # conn.shutdown(socket.SHUT_RDWR)
-                    # conn.close()
-                # if kill_foe == True:
-                #     foe_ip = ""
-                #     if pi_lan == "192.168.0.80":
-                #         foe_ip = "192.168.0.79"
-                #     if pi_lan == "192.168.0.79":
-                #         foe_ip = "192.168.0.80"
-                #     foe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                #     # foe.setblocking(0)
-                #     foe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-                #     ready = select.select([],[foe],[]) #blocking
-                #     if ready[1]:
-                #         foe.connect((foe_ip,65433))
-                #         foe.sendall(b'ppp_kill')
-                #         # foe.shutdown(socket.SHUT_RDWR)
-                #         # foe.close()
-                                                       
-                # if kill_ppp == True:
-                #     # if time.time() - kill_received > 3: #failsafe to start the reset if DC doesn't terminate ppp correctly
-                #     with open(os.devnull, 'wb') as devnull:
-                #         try:
-                #             subprocess.call(["sudo", "killall", "-HUP", "pppd"], stderr=devnull)
-                #             logger.info('executed kill command')
-                #             break
-                #         except:#if ppp is already coming down this might give an exception
-                #             break
+                
                 if ppp_found == False:
                     try:
                         ppp_info = sh.ifconfig("ppp0") #check if we have an active PPP link
@@ -897,9 +783,8 @@ def process():
                 if "pppd" in line and "Exit" in line:#wait for pppd to execute the ip-down script
                     logger.info("Detected modem hang up, going back to listening")
                     break
-            dcnow.go_offline() #changed dcnow to wait 15 seconds for event instead of sleeping. Should be faster.
+            dcnow.go_offline() #changed dcnow to wait 15 seconds for shutdown event instead of sleeping. Should be faster shutdown.
             mode = "LISTENING"
-            # modem = Modem(device_and_speed[0], device_and_speed[1], dial_tone_enabled)
             modem.connect()
             if dial_tone_enabled:
                 modem.start_dial_tone()
