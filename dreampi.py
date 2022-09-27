@@ -209,6 +209,7 @@ proxyarp
 ktune
 noccp
     """.strip()
+    
     this_ip = find_next_unused_ip(".".join(subnet) + ".100")
     dreamcast_ip = find_next_unused_ip(this_ip)
 
@@ -555,8 +556,7 @@ dmz_patcher_out = None
 
 
 def start_dmz_patching(dreamcast_IP):
-    # Not currently working. Will probably changes this to just run iptables commands directly
-    # This should allow traffic to reach the pi for people who DMZ, or forward to the DC IP.
+    # (not working)This should allow traffic to reach the pi for people who DMZ, or forward to the DC IP.
     global dmz_patcher_in
     global dmz_patcher_out
     dmz_patcher_in = []
@@ -624,6 +624,8 @@ def stop_dmz_patching():
     logger.info("DMZ routing disabled")
 
 def process():
+    
+
     killer = GracefulKiller()
 
     dial_tone_enabled = "--disable-dial-tone" not in sys.argv
@@ -683,6 +685,7 @@ def process():
         now = datetime.now()
 
         if mode == "LISTENING":
+            
             modem.update()
             char = modem._serial.read(1).strip()
             if not char:
@@ -702,21 +705,21 @@ def process():
                         if dial_string == "00":
                             side = "waiting"
                             client = "direct_dial"
-                        if dial_string[0:3] == "859": #all capcom IDs will use an 859 prefix
+                        if dial_string[0:3] == "859":
                             try:
                                 kddi_opponent = dial_string
                                 kddi_lookup = "https://dial.redreamcast.net/?phoneNumber=%s" % kddi_opponent
                                 response = urllib2.urlopen(kddi_lookup)
                                 ip = response.read()
-                                if len(ip) == 0: #if the supplied number didn't match a number in the DB
+                                if len(ip) == 0:
                                     pass
                                 else:
                                     dial_string = ip
-                                    # logger.info(dial_string)
+                                    logger.info(dial_string)
                                     saturn = False
                                     side = "calling"
                                     client = "direct_dial"
-                                    time.sleep(7) #delay to make sure wait is connected first
+                                    time.sleep(7)
                             except urllib2.HTTPError:
                                 pass
                         
@@ -729,13 +732,9 @@ def process():
                         time_digit_heard = now
                 except (TypeError, ValueError):
                     pass
-                # except IOError: #bail and restart
-                #     modem.stop_dial_tone()
-                #     modem.connect()
-                #     mode = "LISTENING"
-                #     modem.start_dial_tone()
+                
         elif mode == "ANSWERING":
-            if (now - time_digit_heard).total_seconds() > 8.0: #wait 8 seconds before doing anything? Why?
+            if (now - time_digit_heard).total_seconds() > 8.0:
                 time_digit_heard = None
                 modem.answer()
                 modem.disconnect()
@@ -743,11 +742,11 @@ def process():
         elif mode == "NETLINK ANSWERING":
             if (now - time_digit_heard).total_seconds() > 8.0:
                 time_digit_heard = None
-                modem.connect_netlink(speed=57600,timeout=0.1,rtscts = True) #non-blocking version
+                modem.connect_netlink(speed=57600,timeout=0.01,rtscts = True) #non-blocking version
                 try:
-                    modem.query_modem(b"AT%E0W2\V1") #don't monitor line quality, report modem speed, one line connect message
+                    modem.query_modem(b"AT%E0W2\V1")
                     if saturn:
-                        modem.query_modem(b'AT+MS=V32b,1,14400,14400,14400,14400') #be explicit with saturn baud and modulation standard.
+                        modem.query_modem(b'AT+MS=V32b,1,14400,14400,14400,14400')
                     modem.query_modem("ATA", timeout=120, response = "CONNECT")
                     mode = "NETLINK_CONNECTED"
                 except IOError:
@@ -755,7 +754,8 @@ def process():
                     mode = "LISTENING"
                     modem.start_dial_tone()
         elif mode == "CONNECTED":
-            dcnow.go_online(dreamcast_ip)
+            dcnow.go_online(dreamcast_ip) #don't start dcnow until figure out slow come down
+            print("dcnow invoked")
             # old monitoring loop
             # We start watching /var/log/messages for the hang up message
             # for line in sh.tail("-f", "/var/log/messages", "-n", "1", _iter=True):
@@ -764,11 +764,13 @@ def process():
             #         time.sleep(2)  # Give the hangup some time
             #         break
             ppp_found = False
+            kill_ppp = False
+            kill_foe = False
             
 
             while True: #New monitoring loop
                 time.sleep(0.5)
-                
+              
                 if ppp_found == False:
                     try:
                         ppp_info = sh.ifconfig("ppp0") #check if we have an active PPP link
@@ -783,8 +785,9 @@ def process():
                 if "pppd" in line and "Exit" in line:#wait for pppd to execute the ip-down script
                     logger.info("Detected modem hang up, going back to listening")
                     break
-            dcnow.go_offline() #changed dcnow to wait 15 seconds for shutdown event instead of sleeping. Should be faster shutdown.
+            dcnow.go_offline() #changed dcnow to wait 15 seconds for event instead of sleeping. Should be faster.
             mode = "LISTENING"
+            # modem = Modem(device_and_speed[0], device_and_speed[1], dial_tone_enabled)
             modem.connect()
             if dial_tone_enabled:
                 modem.start_dial_tone()
