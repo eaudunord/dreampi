@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-#dreampi.py_version=1664380916.784385
+#dreampi.py_version=1664385458.556676
 import atexit
 import serial
 import socket
@@ -38,7 +38,7 @@ def updater():
                 if b'_version' in line: 
                     upstream_version = str(line.decode().split('version=')[1]).strip()
                     break
-            local_script = script.split("/")[-1]
+            local_script = "/home/pi/dreampi/"+script.split("/")[-1]
             with open(local_script,'rb') as f:
                 for line in f:
                     if b'_version' in line:
