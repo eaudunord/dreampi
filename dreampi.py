@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-#dreampi.py_version=1664385458.556676
+#dreampi.py_version=1664395251.0211432
 import atexit
 import serial
 import socket
@@ -784,6 +784,7 @@ def process():
                 try:
                     modem.query_modem(b"AT%E0W2\V1")
                     if saturn:
+                        modem.query_modem(b'AT%C0')
                         modem.query_modem(b'AT+MS=V32b,1,14400,14400,14400,14400')
                     modem.query_modem("ATA", timeout=120, response = "CONNECT")
                     mode = "NETLINK_CONNECTED"
