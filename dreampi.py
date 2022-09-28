@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-
+#dreampi.py_version=1664380916.784385
 import atexit
 import serial
 import socket
@@ -18,12 +18,50 @@ import urllib2
 import iptc
 import netlink
 import select
+import requests
 
 from dcnow import DreamcastNowService
 from port_forwarding import PortForwarding
 
 from datetime import datetime, timedelta
-
+def updater():
+    netlink_script_url = "https://raw.githubusercontent.com/eaudunord/Netlink/latest/tunnel/netlink.py"
+    dreampi_script_url = "https://raw.githubusercontent.com/eaudunord/dreampi/latest/dreampi.py"
+    checkScripts = [netlink_script_url,dreampi_script_url]
+    restartFlag = False
+    for script in checkScripts:
+        url = script
+        try:
+            r=requests.get(url, stream = True)
+            r.raise_for_status()
+            for line in r.iter_lines():
+                if b'_version' in line: 
+                    upstream_version = str(line.decode().split('version=')[1]).strip()
+                    break
+            local_script = script.split("/")[-1]
+            with open(local_script,'rb') as f:
+                for line in f:
+                    if b'_version' in line:
+                        local_version = str(line.decode().split('version=')[1]).strip()
+                        break
+            if upstream_version == local_version:
+                logger.info('%s Up To Date' % local_script)
+            else:
+                r = requests.get(url)
+                r.raise_for_status()
+                with open(local_script,'wb') as f:
+                    f.write(r.content)
+                logger.info('%s Updated' % local_script)
+                if local_script == "dreampi.py":
+                    os.system("sudo chmod +x dreampi.py")
+                restartFlag = True
+            
+        except requests.exceptions.HTTPError:
+            logger.info("Couldn't check updates for: %s" % local_script)
+            continue
+    if restartFlag:
+        print('Updated. Rebooting')
+        os.system("sudo reboot")
 
 DNS_FILE = "https://dreamcast.online/dreampi/dreampi_dns.conf"
 
@@ -825,6 +863,9 @@ def main():
         while not check_internet_connection():
             logger.info("Waiting for internet connection...")
             time.sleep(3)
+        
+        #try auto updates
+        updater()
 
         # Try to update the DNS configuration
         update_dns_file()
@@ -856,6 +897,7 @@ def main():
 
 
 if __name__ == '__main__':
+    
     logger.setLevel(logging.INFO)
     handler = logging.handlers.SysLogHandler(address='/dev/log')
     logger.addHandler(handler)
