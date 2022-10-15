@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-#dreampi.py_version=1664395251.0211432
+#dreampi.py_version=1665800638.520868
 import atexit
 import serial
 import socket
@@ -475,7 +475,7 @@ class Modem(object):
         # When we send ATA we only want to look for CONNECT. Some modems respond OK then CONNECT
         # and that messes everything up
         self.send_command("ATA", ignore_responses=["OK"])
-        # time.sleep(5)
+        time.sleep(5)
         logger.info("Call answered!")
         logger.info(subprocess.check_output(["pon", "dreamcast"]))
         logger.info("Connected")
