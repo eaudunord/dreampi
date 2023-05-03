@@ -1,7 +1,7 @@
 #!/usr/bin/env python
-#dreampi.py_version=1665800638.520868
-from __future__ import absolute_import
-from __future__ import print_function
+#dreampi.py_version=202305030924
+# from __future__ import absolute_import
+# from __future__ import print_function
 import atexit
 # from typing import List, Optional, Tuple
 import serial
@@ -17,7 +17,6 @@ import signal
 import re
 import config_server
 import iptc
-import netlink
 import select
 import requests
 
@@ -28,7 +27,8 @@ from datetime import datetime, timedelta
 def updater():
     netlink_script_url = "https://raw.githubusercontent.com/eaudunord/Netlink/latest/tunnel/netlink.py"
     dreampi_script_url = "https://raw.githubusercontent.com/eaudunord/dreampi/latest/dreampi.py"
-    checkScripts = [netlink_script_url,dreampi_script_url]
+    xband_script_url = "https://raw.githubusercontent.com/eaudunord/Netlink/latest/tunnel/xband.py"
+    checkScripts = [netlink_script_url,xband_script_url,dreampi_script_url]
     restartFlag = False
     for script in checkScripts:
         url = script
@@ -40,11 +40,14 @@ def updater():
                     upstream_version = str(line.decode().split('version=')[1]).strip()
                     break
             local_script = "/home/pi/dreampi/"+script.split("/")[-1]
-            with open(local_script,'rb') as f:
-                for line in f:
-                    if b'_version' in line:
-                        local_version = str(line.decode().split('version=')[1]).strip()
-                        break
+            if os.path.isfile(local_script) == False:
+                local_version = None
+            else:
+                with open(local_script,'rb') as f:
+                    for line in f:
+                        if b'_version' in line:
+                            local_version = str(line.decode().split('version=')[1]).strip()
+                            break
             if upstream_version == local_version:
                 logger.info('%s Up To Date' % local_script)
             else:
@@ -60,8 +63,12 @@ def updater():
         except requests.exceptions.HTTPError:
             logger.info("Couldn't check updates for: %s" % local_script)
             continue
+    global xband
+    global netlink
+    import xband as xband
+    import netlink as netlink
     if restartFlag:
-        print('Updated. Rebooting')
+        logger.info('Updated. Rebooting')
         os.system("sudo reboot")
 
 DNS_FILE = "https://dreamcast.online/dreampi/dreampi_dns.conf"
@@ -429,6 +436,14 @@ class Modem(object):
             self._device, self._speed, timeout=0
         )
         return self._serial
+    
+    def connect_netlink(self,speed = 115200, timeout = 0.01, rtscts = False): #non-blocking
+        if self._serial:
+            self.disconnect()
+        logger.info("Opening serial interface to {}".format(self._device))
+        self._serial = serial.Serial(
+            self._device, speed, timeout=timeout, rtscts = rtscts
+        )
 
     def disconnect(self):
         if self._serial and self._serial.isOpen():
@@ -494,7 +509,7 @@ class Modem(object):
         else:
             final_command = ("%s\r\n" % command).encode()      
         self._serial.write(final_command)
-        print(final_command.decode())
+        logger.info(final_command.decode())
 
         start = time.time()
 
@@ -584,6 +599,12 @@ class Modem(object):
                 self._serial.write(byte)
                 self._time_since_last_dial_tone = now
 
+    def init_xband(self):
+        self.connect_netlink(speed=57600,timeout=0.05,rtscts=True)
+        self.query_modem(b'AT%E0')
+        self.query_modem(b"AT\V1%C0")
+        self.query_modem(b'AT+MS=V22b')
+
 
 class GracefulKiller(object):
     def __init__(self):
@@ -605,11 +626,16 @@ def do_netlink(side,dial_string,modem):
         time.sleep(4)
         modem.send_command(b'ATH0')
         return
-    netlink.netlink_exchange(side,state,opponent)
+    netlink.netlink_exchange(side,state,opponent,ser=modem._serial)
 
 
 def process():
     
+    xbandnums = ["18002071194","19209492263","0120717360","0355703001"]
+    
+    xbandMatching = False
+    xbandTimer = None
+    xbandInit = False
 
     killer = GracefulKiller()
 
@@ -666,6 +692,25 @@ def process():
 
         if mode == "LISTENING":
             
+            if xbandMatching == True:
+                if xbandInit == False:
+                    xband.xbandInit()
+                    xbandInit = True
+                if time.time() - xbandTimer > 900:
+                    xbandMatching = False
+                    continue
+                xband.openXband()
+                xbandResult,opponent = xband.xbandListen(modem)
+                if xbandResult == "connected":
+                    netlink.netlink_exchange("waiting","connected",opponent,ser=modem._serial)
+                    logger.info("Xband Disconnected")
+                    mode = "LISTENING"
+                    modem.connect()
+                    modem.start_dial_tone()
+                    xbandMatching = False
+                    xband.closeXband()
+                
+            
             modem.update()
             char = modem._serial.read(1)
             char = char.strip()
@@ -683,10 +728,16 @@ def process():
                         dial_string = parsed['dial_string']
                         side = parsed['side']
                         logger.info("Heard: %s" % dial_string)
-                        if dial_string == "00":
+                        
+                        if dial_string in xbandnums:
+                            logger.info("Incoming call from Xband")
+                            client = "xband"
+                            mode = "XBAND ANSWERING"
+
+                        elif dial_string == "00":
                             side = "waiting"
                             client = "direct_dial"
-                        if dial_string[0:3] == "859":
+                        elif dial_string[0:3] == "859":
                             try:
                                 kddi_opponent = dial_string
                                 kddi_lookup = "https://dial.redreamcast.net/?phoneNumber=%s" % kddi_opponent
@@ -704,10 +755,17 @@ def process():
                                     time.sleep(7)
                             except requests.exceptions.HTTPError:
                                 pass
+                        elif len(dial_string.split('*')) == 5 and dial_string.split('*')[-1] == "1":
+                            oppIP = '.'.join(dial_string.split('*')[0:4])
+                            client = "xband"
+                            mode = "NETLINK ANSWERING"
+                            side = "calling"
                         
                        
                         if client == "direct_dial":
                             mode = "NETLINK ANSWERING"
+                        elif client == "xband":
+                            pass
                         else:
                             mode = "ANSWERING"
                         modem.stop_dial_tone()
@@ -715,6 +773,18 @@ def process():
                 except (TypeError, ValueError):
                     pass
                 
+        elif mode == "XBAND ANSWERING":
+            # print("xband answering")
+            if (now - time_digit_heard).total_seconds() > 8.0:
+                time_digit_heard = None
+                modem.query_modem("ATA", timeout=120, response = "CONNECT")
+                xband.xbandServer(modem)
+                mode = "LISTENING"
+                modem.connect()
+                modem.start_dial_tone()
+                xbandMatching = True
+                xbandTimer = time.time()
+
         elif mode == "ANSWERING":
             if time_digit_heard is None:
                 raise Exception("Impossible code path")
@@ -723,17 +793,29 @@ def process():
                 modem.answer()
                 modem.disconnect()
                 mode = "CONNECTED"
+
         elif mode == "NETLINK ANSWERING":
             if (now - time_digit_heard).total_seconds() > 8.0:
                 time_digit_heard = None
-                modem.connect_netlink(speed=57600,timeout=0.01,rtscts = True) #non-blocking version
+                
                 try:
-                    modem.query_modem(b"AT%E0W2\V1")
-                    if saturn:
-                        modem.query_modem(b'AT%C0')
-                        modem.query_modem(b'AT+MS=V32b,1,14400,14400,14400,14400')
-                    modem.query_modem(b"ATA", timeout=120, response = "CONNECT")
-                    mode = "NETLINK_CONNECTED"
+                    if client == "xband":
+                        modem.init_xband()
+                        result = xband.ringPhone(oppIP,modem)
+                        if result == "hangup":
+                            mode = "LISTENING"
+                            modem.connect()
+                            modem.start_dial_tone()
+                        else:
+                            mode = "NETLINK_CONNECTED"
+                    else:
+                        modem.connect_netlink(speed=57600,timeout=0.01,rtscts = True) #non-blocking version
+                        modem.query_modem(b"AT%E0\V1")
+                        if saturn:
+                            modem.query_modem(b'AT%C0\N3')
+                            modem.query_modem(b'AT+MS=V32b,1,14400,14400,14400,14400')
+                        modem.query_modem(b"ATA", timeout=120, response = "CONNECT")
+                        mode = "NETLINK_CONNECTED"
                 except IOError:
                     modem.connect()
                     mode = "LISTENING"
@@ -752,7 +834,10 @@ def process():
             if dial_tone_enabled:
                 modem.start_dial_tone()
         elif mode == "NETLINK_CONNECTED":
-            do_netlink(side,dial_string,modem)
+            if client == "xband":
+                netlink.netlink_exchange("calling","connected",oppIP,ser=modem._serial)
+            else:
+                do_netlink(side,dial_string,modem)
             logger.info("Netlink Disconnected")
             mode = "LISTENING"
             modem.connect()
