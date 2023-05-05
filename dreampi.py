@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-#dreampi.py_version=202305030924
+#dreampi.py_version=202305051723
 # from __future__ import absolute_import
 # from __future__ import print_function
 import atexit
@@ -63,10 +63,7 @@ def updater():
         except requests.exceptions.HTTPError:
             logger.info("Couldn't check updates for: %s" % local_script)
             continue
-    global xband
-    global netlink
-    import xband as xband
-    import netlink as netlink
+
     if restartFlag:
         logger.info('Updated. Rebooting')
         os.system("sudo reboot")
@@ -636,6 +633,7 @@ def process():
     xbandMatching = False
     xbandTimer = None
     xbandInit = False
+    openXband = False
 
     killer = GracefulKiller()
 
@@ -698,8 +696,12 @@ def process():
                     xbandInit = True
                 if time.time() - xbandTimer > 900:
                     xbandMatching = False
+                    xband.closeXband()
+                    openXband = False
                     continue
-                xband.openXband()
+                if openXband == False:
+                    xband.openXband()
+                    openXband == True
                 xbandResult,opponent = xband.xbandListen(modem)
                 if xbandResult == "connected":
                     netlink.netlink_exchange("waiting","connected",opponent,ser=modem._serial)
@@ -709,6 +711,7 @@ def process():
                     modem.start_dial_tone()
                     xbandMatching = False
                     xband.closeXband()
+                    openXband = False
                 
             
             modem.update()
@@ -777,7 +780,7 @@ def process():
             # print("xband answering")
             if (now - time_digit_heard).total_seconds() > 8.0:
                 time_digit_heard = None
-                modem.query_modem("ATA", timeout=120, response = "CONNECT")
+                modem.query_modem("ATA", timeout=60, response = "CONNECT")
                 xband.xbandServer(modem)
                 mode = "LISTENING"
                 modem.connect()
@@ -874,6 +877,10 @@ def main():
         
         #try auto updates
         updater()
+        global xband
+        global netlink
+        import xband as xband
+        import netlink as netlink
 
         # Try to update the DNS configuration
         update_dns_file()
