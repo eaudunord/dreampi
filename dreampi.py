@@ -701,7 +701,7 @@ def process():
                     continue
                 if openXband == False:
                     xband.openXband()
-                    openXband == True
+                    openXband = True
                 xbandResult,opponent = xband.xbandListen(modem)
                 if xbandResult == "connected":
                     netlink.netlink_exchange("waiting","connected",opponent,ser=modem._serial)
