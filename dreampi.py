@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-#dreampi.py_version=202305061321
+#dreampi.py_version=202305141942
 # from __future__ import absolute_import
 # from __future__ import print_function
 import atexit
@@ -544,7 +544,7 @@ class Modem(object):
         logger.info(final_command.decode())
 
         start = datetime.now()
-
+        errorCount = 0
         line = b""
         while True:
             new_data = self._serial.readline().strip()
@@ -555,7 +555,14 @@ class Modem(object):
             line = line + new_data
             for resp in VALID_RESPONSES:
                 if resp in line:
-                    logger.info(line[line.find(resp) :].decode())
+                    if resp != b"OK":
+                        print('Response: %s' % line.decode())
+                        if resp == b"ERROR" and errorCount < 4:
+                            errorCount += 1
+                            time.sleep(0.5)
+                            self._serial.write(final_command)
+                            break
+                    # logger.info(line[line.find(resp) :].decode())
                     return  # We are done
 
             if (datetime.now() - start).total_seconds() > timeout:
@@ -596,12 +603,6 @@ class Modem(object):
                 self._serial.write(byte)
                 self._time_since_last_dial_tone = now
 
-    def init_xband(self):
-        self.connect_netlink(speed=57600,timeout=0.05,rtscts=True)
-        self.query_modem(b'AT%E0')
-        self.query_modem(b"AT\V1%C0")
-        self.query_modem(b'AT+MS=V22b')
-
 
 class GracefulKiller(object):
     def __init__(self):
@@ -613,7 +614,7 @@ class GracefulKiller(object):
         logging.warning("Received signal: %s", signum)
         self.kill_now = True
 
-def do_netlink(side,dial_string,modem):
+def do_netlink(side,dial_string,modem,saturn=True):
     # ser = serial.Serial(device_and_speed[0], device_and_speed[1], timeout=0.005)
     state, opponent  = netlink.netlink_setup(side,dial_string,modem)
     if state == "failed":
@@ -623,7 +624,10 @@ def do_netlink(side,dial_string,modem):
         time.sleep(4)
         modem.send_command(b'ATH0')
         return
-    netlink.netlink_exchange(side,state,opponent,ser=modem._serial)
+    if saturn == False:
+        netlink.kddi_exchange(side,state,opponent,ser=modem._serial)
+    else:
+        netlink.netlink_exchange(side,state,opponent,ser=modem._serial)
 
 
 def process():
@@ -680,6 +684,7 @@ def process():
         modem.start_dial_tone()
 
     time_digit_heard = None
+    global saturn
     saturn = True
     dcnow = DreamcastNowService()
     while True:
@@ -694,7 +699,7 @@ def process():
                 if xbandInit == False:
                     xband.xbandInit()
                     xbandInit = True
-                if time.time() - xbandTimer > 900:
+                if time.time() - xbandTimer > 900: #Listen for incoming connections for 15 minutes
                     xbandMatching = False
                     xband.closeXband()
                     openXband = False
@@ -704,7 +709,7 @@ def process():
                     openXband = True
                 xbandResult,opponent = xband.xbandListen(modem)
                 if xbandResult == "connected":
-                    netlink.netlink_exchange("waiting","connected",opponent,ser=modem._serial)
+                    xband.netlink_exchange("waiting","connected",opponent,ser=modem._serial)
                     logger.info("Xband Disconnected")
                     mode = "LISTENING"
                     modem.connect()
@@ -733,7 +738,7 @@ def process():
                         logger.info("Heard: %s" % dial_string)
                         
                         if dial_string in xbandnums:
-                            logger.info("Incoming call from Xband")
+                            logger.info("Calling Xband server")
                             client = "xband"
                             mode = "XBAND ANSWERING"
 
@@ -803,7 +808,7 @@ def process():
                 
                 try:
                     if client == "xband":
-                        modem.init_xband()
+                        xband.init_xband(modem)
                         result = xband.ringPhone(oppIP,modem)
                         if result == "hangup":
                             mode = "LISTENING"
@@ -838,9 +843,9 @@ def process():
                 modem.start_dial_tone()
         elif mode == "NETLINK_CONNECTED":
             if client == "xband":
-                netlink.netlink_exchange("calling","connected",oppIP,ser=modem._serial)
+                xband.netlink_exchange("calling","connected",oppIP,ser=modem._serial)
             else:
-                do_netlink(side,dial_string,modem)
+                do_netlink(side,dial_string,modem,saturn=saturn)
             logger.info("Netlink Disconnected")
             mode = "LISTENING"
             modem.connect()

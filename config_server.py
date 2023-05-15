@@ -4,7 +4,7 @@ import cgi
 import os
 
 from BaseHTTPServer import BaseHTTPRequestHandler, HTTPServer
-from dcnow import CONFIGURATION_FILE, scan_mac_address
+from dcnow import CONFIGURATION_FILE, hash_mac_address as scan_mac_address
 
 
 class DreamPiConfigurationService(BaseHTTPRequestHandler):
