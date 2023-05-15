@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-#dreampi.py_version=202305141942
+#dreampi.py_version=202305142148
 # from __future__ import absolute_import
 # from __future__ import print_function
 import atexit
@@ -561,6 +561,7 @@ class Modem(object):
                             errorCount += 1
                             time.sleep(0.5)
                             self._serial.write(final_command)
+                            line = b""
                             break
                     # logger.info(line[line.find(resp) :].decode())
                     return  # We are done
