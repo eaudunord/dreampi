@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-#dreampi.py_version=202307211901
+#dreampi.py_version=202307212004
 # from __future__ import absolute_import
 # from __future__ import print_function
 import atexit
@@ -25,6 +25,10 @@ from port_forwarding import PortForwarding
 
 from datetime import datetime, timedelta
 def updater():
+
+    if os.path.isfile("/boot/noautoupdates.txt") == True:
+        logger.info("Dreampi script auto updates are disabled")
+        return
     netlink_script_url = "https://raw.githubusercontent.com/eaudunord/Netlink/latest/tunnel/netlink.py"
     dreampi_script_url = "https://raw.githubusercontent.com/eaudunord/dreampi/latest/dreampi.py"
     xband_script_url = "https://raw.githubusercontent.com/eaudunord/Netlink/latest/tunnel/xband.py"
