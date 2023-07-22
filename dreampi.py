@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-#dreampi.py_version=202305142148
+#dreampi.py_version=202307211901
 # from __future__ import absolute_import
 # from __future__ import print_function
 import atexit
@@ -63,6 +63,10 @@ def updater():
         except requests.exceptions.HTTPError:
             logger.info("Couldn't check updates for: %s" % local_script)
             continue
+
+        except requests.exceptions.SSLError:
+            logger.info("SSL error while checking for updates. System time may need to be synced")
+            return
 
     if restartFlag:
         logger.info('Updated. Rebooting')
@@ -450,18 +454,33 @@ class Modem(object):
             logger.info("Serial interface terminated")
 
     def reset(self):
-        self.send_command(b"ATZ0")  # Send reset command
-        self.send_command(b"ATE0")  # Don't echo our responses
+        while True:
+            try:
+                self.send_command("ATZ0",timeout=3)  # Send reset command
+                time.sleep(1)
+                self.send_command("AT&F0")
+                self.send_command("ATE0W2")  # Don't echo our responses
+                return
+            except IOError:
+                self.shake_it_off() # modem isn't responding. Try a harder reset
 
     def start_dial_tone(self):
         if not self._dial_tone_wav:
             return
-
-        self.reset()
-        self.send_command(b"AT+FCLASS=8")  # Enter voice mode
-        self.send_command(b"AT+VLS=1")  # Go off-hook
-        self.send_command(b"AT+VSM=1,8000")  # 8 bit unsigned PCM
-        self.send_command(b"AT+VTX")  # Voice transmission mode
+        i = 0
+        while i < 3:
+            try:
+                self.reset()
+                self.send_command(b"AT+FCLASS=8")  # Enter voice mode
+                self.send_command(b"AT+VLS=1")  # Go off-hook
+                self.send_command(b"AT+VSM=1,8000")  # 8 bit unsigned PCM
+                self.send_command(b"AT+VTX")  # Voice transmission mode
+                logger.info("<LISTENING>")
+                break
+            except IOError:
+                time.sleep(0.5)
+                i+=1
+                pass
 
         self._sending_tone = True
 
@@ -539,37 +558,34 @@ class Modem(object):
         for ignore in ignore_responses:
             VALID_RESPONSES.remove(ignore)
 
-        final_command = ("%s\r\n" % command).encode()
-        self._serial.write(final_command)
-        logger.info(final_command.decode())
+        if isinstance(command, bytes):
+            final_command = command + b'\r\n'
+        else:
+            final_command = ("%s\r\n" % command).encode() 
 
-        start = datetime.now()
-        errorCount = 0
+        self._serial.write(final_command)
+        logger.info('Command: %s' % final_command.decode())
+
+        start = time.time()
         line = b""
         while True:
             new_data = self._serial.readline().strip()
 
             if not new_data:
-                continue
+                if time.time() - start < timeout:
+                    continue
+                raise IOError("There was a timeout while waiting for a response from the modem")
 
             line = line + new_data
             for resp in VALID_RESPONSES:
                 if resp in line:
                     if resp != b"OK":
-                        print('Response: %s' % line.decode())
-                        if resp == b"ERROR" and errorCount < 4:
-                            errorCount += 1
-                            time.sleep(0.5)
-                            self._serial.write(final_command)
-                            line = b""
-                            break
+                        logger.info('Response: %s' % line.decode())
+                        if resp == b"ERROR":
+                            raise IOError("Command returned an error")
                     # logger.info(line[line.find(resp) :].decode())
                     return  # We are done
 
-            if (datetime.now() - start).total_seconds() > timeout:
-                raise IOError(
-                    "There was a timeout while waiting for a response from the modem"
-                )
 
     def send_escape(self):
         if self._serial is None:
@@ -577,6 +593,15 @@ class Modem(object):
         time.sleep(1.0)
         self._serial.write(b"+++")
         time.sleep(1.0)
+
+    def shake_it_off(self): #sometimes the modem gets stuck in data mode
+        for i in range(3):
+            self._serial.write(b'+')
+            time.sleep(0.2)
+        time.sleep(4)
+        self.send_command('ATH0') #make sure we're on hook
+        logger.info("Shook it off")
+
 
     def update(self):
         now = datetime.now()
@@ -746,6 +771,7 @@ def process():
                         elif dial_string == "00":
                             side = "waiting"
                             client = "direct_dial"
+                            saturn = False
                         elif dial_string[0:3] == "859":
                             try:
                                 kddi_opponent = dial_string
@@ -885,8 +911,11 @@ def main():
         updater()
         global xband
         global netlink
-        import xband as xband
-        import netlink as netlink
+        try:
+            import xband as xband
+            import netlink as netlink
+        except ImportError:
+            logger.info("couldn't import xband or netlink modules")
 
         # Try to update the DNS configuration
         update_dns_file()
