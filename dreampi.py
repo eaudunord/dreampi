@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-#dreampi.py_version=202307212004
+#dreampi.py_version=202402202004
 # from __future__ import absolute_import
 # from __future__ import print_function
 import atexit
@@ -30,9 +30,8 @@ def updater():
         logger.info("Dreampi script auto updates are disabled")
         return
     netlink_script_url = "https://raw.githubusercontent.com/eaudunord/Netlink/latest/tunnel/netlink.py"
-    dreampi_script_url = "https://raw.githubusercontent.com/eaudunord/dreampi/latest/dreampi.py"
     xband_script_url = "https://raw.githubusercontent.com/eaudunord/Netlink/latest/tunnel/xband.py"
-    checkScripts = [netlink_script_url,xband_script_url,dreampi_script_url]
+    checkScripts = [netlink_script_url,xband_script_url]
     restartFlag = False
     for script in checkScripts:
         url = script
@@ -80,6 +79,7 @@ DNS_FILE = "https://dreamcast.online/dreampi/dreampi_dns.conf"
 
 
 logger = logging.getLogger("dreampi")
+logger.propagate = False
 
 
 def check_internet_connection():
@@ -124,7 +124,17 @@ def update_dns_file():
         response.raise_for_status()
     except requests.exceptions.HTTPError:
         logging.info(
-            "Did not find remote DNS confi; will use upstream"
+            "Did not find remote DNS config; will use upstream"
+        )
+        return
+    except requests.exceptions.Timeout:
+        logging.info(
+            "Request timed out; will use upstream"
+        )
+        return
+    except requests.exceptions.SSLError:
+        logging.info(
+            "SSL error; will use upstream"
         )
         return
 
@@ -142,12 +152,104 @@ def update_dns_file():
     subprocess.check_call("sudo service dnsmasq start".split())
 
 
+# Update dreampi.py if file exists in /boot
+def dreampi_py_local_update():
+    if os.path.isfile("/boot/dpiupdate.py") == False:
+        logger.info("No update file is found in /boot")
+        return
 
-afo_patcher = None
+    os.system("sudo mv /boot/dpiupdate.py /home/pi/dreampi/dreampi.py")
+    os.system("sudo chown pi:pi /home/pi/dreampi/dreampi.py")
+    os.system("sudo chmod +x /home/pi/dreampi/dreampi.py")
+    logger.info('Updated the dreampi.py from /boot/dpiupdate.py ... Rebooting')
+    os.system("sudo reboot")
 
+# Increase the TTL in the IP HDR from 30 to 64
+def add_increased_ttl():
+    table = iptc.Table(iptc.Table.MANGLE)
+    chain = iptc.Chain(table, "PREROUTING")
+
+    rule = iptc.Rule()
+    rule.in_interface = "ppp0"
+    rule.create_target("TTL").ttl_set = str(64)
+
+    chain.insert_rule(rule)
+
+    logger.info("DC TTL increased from 30 to 64")
+    return rule
+
+def remove_increased_ttl(ttl_rule):
+    if ttl_rule:
+        table = iptc.Table(iptc.Table.MANGLE)
+        chain = iptc.Chain(table, "PREROUTING")
+        chain.delete_rule(ttl_rule)
+        logger.info("DC TTL removed")
+
+# Add additional DNAT rules
+def start_dnat_rules():
+    rules = []
+
+    def fetch_replacement_ips():
+        url = "https://shumania.ddns.net/dnat.txt"
+        try:
+            r = requests.get(url, verify=False)
+            r.raise_for_status()
+            return r.text.strip()
+        except requests.exceptions.HTTPError:
+            logging.info(
+            "HTTP error; will skip adding DNAT rules"
+            )
+            return None
+        except requests.exceptions.Timeout:
+            logging.info(
+            "Request timed out; will skip adding DNAT rules"
+            )
+            return None
+        except requests.exceptions.SSLError:
+            logging.info(
+            "SSL error; will skip adding DNAT rules"
+            )
+            return None
+
+    data = fetch_replacement_ips()
+
+    if data is None:
+        logger.info("No DNAT rules added")
+        return None
+
+    for ips in data.splitlines():
+        ip = ips.split()
+        
+        if ip[0] is None:
+            logger.info("Missing SRC in DNAT rule - SKIP")
+            return None
+
+        if ip[1] is None:
+            logger.info("Missing DST in DNAT rule - SKIP")
+            return None
+ 
+        table = iptc.Table(iptc.Table.NAT)
+        chain = iptc.Chain(table, "PREROUTING")
+
+        rule = iptc.Rule()
+        rule.protocol = "tcp"
+        rule.dst = ip[0]
+        rule.create_target("DNAT")
+        rule.target.to_destination = ip[1]
+
+        chain.append_rule(rule)
+        logger.info("DNAT rule appended %s -> %s",ip[0],ip[1])
+        rules.append(rule)
+    return rules
+
+def remove_dnat_rule(drule):
+    if drule:
+        table = iptc.Table(iptc.Table.NAT)
+        chain = iptc.Chain(table, "PREROUTING")
+        chain.delete_rule(drule)
+        logger.info("DNAT rule removed")
 
 def start_afo_patching():
-    global afo_patcher
 
     def fetch_replacement_ip():
         url = "http://dreamcast.online/afo.txt"
@@ -187,10 +289,9 @@ def stop_afo_patching(afo_patcher_rule):
         chain.delete_rule(afo_patcher_rule)
         logger.info("AFO routing disabled")
 
-
 def start_service(name):
     try:
-        logger.info("Starting {} process - Thanks Jonas Karlsson!".format(name))
+        logger.info("Starting {} process - Thanks ShuoumaDC!".format(name))
         with open(os.devnull, "wb") as devnull:
             subprocess.check_call(["sudo", "service", name, "start"], stdout=devnull)
     except (subprocess.CalledProcessError, IOError):
@@ -259,9 +360,11 @@ def autoconfigure_ppp(device, speed):
     ).decode()
     subnet = gateway_ip.split(".")[:3]
 
-    PEERS_TEMPLATE = "{device}\n" "{device_speed}\n" "{this_ip}:{dc_ip}\n" "noauth\n"
+    PEERS_TEMPLATE = "{device}\n" "{device_speed}\n" "{this_ip}:{dc_ip}\n" "auth\n"
 
     OPTIONS_TEMPLATE = "debug\n" "ms-dns {this_ip}\n" "proxyarp\n" "ktune\n" "noccp\n"
+
+    PAP_SECRETS_TEMPLATE = "# Modded from dreampi.py\n" "# INBOUND connections\n" '*       *       ""      *' "\n"
 
     this_ip = find_next_unused_ip(".".join(subnet) + ".100")
     dreamcast_ip = find_next_unused_ip(this_ip)
@@ -279,6 +382,11 @@ def autoconfigure_ppp(device, speed):
 
     with open("/etc/ppp/options", "w") as f:
         f.write(options_content)
+
+    pap_secrets_content = PAP_SECRETS_TEMPLATE
+
+    with open("/etc/ppp/pap-secrets", "w") as f:
+        f.write(pap_secrets_content)
 
     return dreamcast_ip
 
@@ -668,6 +776,7 @@ def process():
     xbandTimer = None
     xbandInit = False
     openXband = False
+    serialPort = False
 
     killer = GracefulKiller()
 
@@ -697,6 +806,15 @@ def process():
         time.sleep(5)
 
     modem = Modem(device_and_speed[0], device_and_speed[1], dial_tone_enabled)
+
+    try:
+        usb = Modem("/dev/ttyUSB0",115200,send_dial_tone=False)
+        usb.connect_netlink(speed=115200,rtscts=True)
+        serialPort = True
+    except:
+        logger.info("couldn't connect to USB adapter")
+        
+        serialPort = False
 
     dreamcast_ip = autoconfigure_ppp(modem.device_name, modem.device_speed)
 
@@ -748,7 +866,30 @@ def process():
                     xband.closeXband()
                     openXband = False
                 
-            
+            if serialPort == True:
+                
+                payload = usb._serial.read(usb._serial.in_waiting)
+                if len(payload) > 0:
+                    logger.info("serial port: %s" % payload)
+                    if payload[:2] == b'AT':
+                        if payload == b'AT\r\n' or payload == b'AT\n':
+                            usb._serial.write(b'OK\r\n')
+                        elif payload == b'ATZ\r\n' or payload == b'ATZ\n':
+                            usb._serial.write(b'OK\r\n')
+                        elif payload[:4] == b'ATDT':
+                            usb._serial.write(b'CONNECT 115200\r\n')
+                            # autoconfigure_ppp("/dev/ttyUSB0", 115200)
+                            time.sleep(5) #some games need a sleep before turning on pppd
+                            logger.info("Call answered!")
+                            # os.system("pon -detach crtscts lcp-echo-interval 10 lcp-echo-failure 2 lock local proxyarp {}:{} /dev/ttyUSB0 115200".format(this_ip,dreamcast_ip))
+                            logger.info(subprocess.check_output(["pon", "dreamcast", "lcp-echo-interval", "10", "local", "crtscts", "lcp-echo-failure","2","lcp-max-terminate","1","/dev/ttyUSB0", "115200"]).decode())
+                            logger.info("CONNECT")
+                            usb.disconnect()
+                            mode = "CONNECTED"
+                            modem.stop_dial_tone()
+                            continue
+                        else:
+                            usb._serial.write(b'OK\r\n')
             modem.update()
             char = modem._serial.read(1)
             char = char.strip()
@@ -866,10 +1007,24 @@ def process():
                 if "pppd" in line and "Exit" in line:#wait for pppd to execute the ip-down script
                     logger.info("Detected modem hang up, going back to listening")
                     break
+                if "pppd" in line and "Connection terminated." in line:
+                    if serialPort == True:
+                        logger.info("pppd ip-down finished")
+                        try:
+                            print(subprocess.check_output(['sudo', 'poff', '-a']))
+                            time.sleep(5)
+                            print(subprocess.check_output(['sudo', 'poff', '-a']))
+                            # why do I have to do this twice? pppd doesn't detect a hangup when ppp disconnects.
+                            # a cleaner solution would be preferable but this works
+                        except Exception as e:
+                            print(e)
             dcnow.go_offline() #changed dcnow to wait 15 seconds for event instead of sleeping. Should be faster.
             mode = "LISTENING"
             # modem = Modem(device_and_speed[0], device_and_speed[1], dial_tone_enabled)
             modem.connect()
+            if serialPort == True:
+                logger.info('reconnecting serial port')
+                usb.connect_netlink(speed=115200,rtscts=True)
             if dial_tone_enabled:
                 modem.start_dial_tone()
         elif mode == "NETLINK_CONNECTED":
@@ -904,6 +1059,8 @@ def enable_prom_mode_on_wlan0():
 
 def main():
     afo_patcher_rule = None
+    ttl_rule = None
+    dnat_rules = []
 
     try:
         # Don't do anything until there is an internet connection
@@ -911,7 +1068,7 @@ def main():
             logger.info("Waiting for internet connection...")
             time.sleep(3)
         
-        #try auto updates
+        #try auto updates /disabled for now
         updater()
         global xband
         global netlink
@@ -920,6 +1077,10 @@ def main():
             import netlink as netlink
         except ImportError:
             logger.info("couldn't import xband or netlink modules")
+
+
+        # Dreampi local update check
+        dreampi_py_local_update()
 
         # Try to update the DNS configuration
         update_dns_file()
@@ -932,9 +1093,12 @@ def main():
 
         config_server.start()
         afo_patcher_rule = start_afo_patching()
+        dnat_rules = start_dnat_rules()
+        ttl_rule = add_increased_ttl()
         start_service("dcvoip")
         start_service("dcgamespy")
         start_service("dc2k2")
+        start_service("dcdaytona")
         return process()
     except:
         logger.exception("Something went wrong...")
@@ -943,8 +1107,14 @@ def main():
         stop_service("dc2k2")
         stop_service("dcgamespy")
         stop_service("dcvoip")
+        stop_service("dcdaytona")
         if afo_patcher_rule is not None:
             stop_afo_patching(afo_patcher_rule)
+        if ttl_rule is not None:
+            remove_increased_ttl(ttl_rule)
+        if dnat_rules is not None:
+            for drule in dnat_rules:
+                remove_dnat_rule(drule)
 
         config_server.stop()
         logger.info("Dreampi quit successfully")
