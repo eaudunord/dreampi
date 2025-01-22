@@ -867,29 +867,34 @@ def process():
                     openXband = False
                 
             if serialPort == True:
+                try:
                 
-                payload = usb._serial.read(usb._serial.in_waiting)
-                if len(payload) > 0:
-                    logger.info("serial port: %s" % payload)
-                    if payload[:2] == b'AT':
-                        if payload == b'AT\r\n' or payload == b'AT\n':
-                            usb._serial.write(b'OK\r\n')
-                        elif payload == b'ATZ\r\n' or payload == b'ATZ\n':
-                            usb._serial.write(b'OK\r\n')
-                        elif payload[:4] == b'ATDT':
-                            usb._serial.write(b'CONNECT 115200\r\n')
-                            # autoconfigure_ppp("/dev/ttyUSB0", 115200)
-                            time.sleep(5) #some games need a sleep before turning on pppd
-                            logger.info("Call answered!")
-                            # os.system("pon -detach crtscts lcp-echo-interval 10 lcp-echo-failure 2 lock local proxyarp {}:{} /dev/ttyUSB0 115200".format(this_ip,dreamcast_ip))
-                            logger.info(subprocess.check_output(["pon", "dreamcast", "lcp-echo-interval", "10", "local", "crtscts", "lcp-echo-failure","2","lcp-max-terminate","1","/dev/ttyUSB0", "115200"]).decode())
-                            logger.info("CONNECT")
-                            usb.disconnect()
-                            mode = "CONNECTED"
-                            modem.stop_dial_tone()
-                            continue
-                        else:
-                            usb._serial.write(b'OK\r\n')
+                    payload = usb._serial.read(usb._serial.in_waiting)
+                    if len(payload) > 0:
+                        logger.info("serial port: %s" % payload)
+                        if payload[:2] == b'AT':
+                            if payload == b'AT\r\n' or payload == b'AT\n':
+                                usb._serial.write(b'OK\r\n')
+                            elif payload == b'ATZ\r\n' or payload == b'ATZ\n':
+                                usb._serial.write(b'OK\r\n')
+                            elif payload[:4] == b'ATDT':
+                                usb._serial.write(b'CONNECT 115200\r\n')
+                                # autoconfigure_ppp("/dev/ttyUSB0", 115200)
+                                time.sleep(5) #some games need a sleep before turning on pppd
+                                logger.info("Call answered!")
+                                # os.system("pon -detach crtscts lcp-echo-interval 10 lcp-echo-failure 2 lock local proxyarp {}:{} /dev/ttyUSB0 115200".format(this_ip,dreamcast_ip))
+                                logger.info(subprocess.check_output(["pon", "dreamcast", "lcp-echo-interval", "10", "local", "crtscts", "lcp-echo-failure","2","lcp-max-terminate","1","/dev/ttyUSB0", "115200"]).decode())
+                                logger.info("CONNECT")
+                                usb.disconnect()
+                                mode = "CONNECTED"
+                                modem.stop_dial_tone()
+                                continue
+                            else:
+                                usb._serial.write(b'OK\r\n')
+                except IOError:
+                    logger.info("serial device disconnected")
+                    serialPort = False
+                    continue
             modem.update()
             char = modem._serial.read(1)
             char = char.strip()
